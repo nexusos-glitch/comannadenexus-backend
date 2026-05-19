@@ -272,20 +272,36 @@ function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [visits, setVisits] = useState<any[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [viewingAgentVersionsId, setViewingAgentVersionsId] = useState<string | null>(null);
+  const [agentVersions, setAgentVersions] = useState<any[]>([]);
+  const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '' });
+
+  const fetchAgentVersions = async (id: string) => {
+    const res = await fetch(`/api/agents/${id}/versions`);
+    const data = await res.json();
+    setAgentVersions(data);
+  };
+
 
   const fetchAll = async () => {
-    const [dRes, cRes, uRes, aRes, vRes] = await Promise.all([
+    const [dRes, cRes, uRes, aRes, vRes, agRes] = await Promise.all([
       fetch('/api/domains').then(r => r.json()),
       fetch('/api/components').then(r => r.json()),
       fetch('/api/users').then(r => r.json()),
       fetch('/api/ads').then(r => r.json()),
-      fetch('/api/visits').then(r => r.json())
+      fetch('/api/visits').then(r => r.json()),
+      fetch('/api/agents').then(r => r.json())
     ]);
     setDomains(dRes);
     setComponents(cRes);
     setUsers(uRes);
     setAds(aRes);
     setVisits(vRes);
+    setAgents(agRes);
+    if (!selectedAgentId && agRes.length > 0) setSelectedAgentId(agRes[0].id);
   };
 
   useEffect(() => {
@@ -399,7 +415,7 @@ function AdminDashboard() {
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: input })
+        body: JSON.stringify({ instruction: input, agent_id: selectedAgentId })
       });
       const data = await res.json();
       if (data.error) {
@@ -500,8 +516,14 @@ function AdminDashboard() {
               <Terminal className="w-4 h-4"/> System Events
             </button>
             <button 
+              onClick={() => setActiveTab('agents_management')} 
+              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'agents_management' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
+            >
+              <Settings className="w-4 h-4"/> Agents Matrix
+            </button>
+            <button 
               onClick={() => setActiveTab('agent')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors border border-red-900 bg-red-950/30", activeTab === 'agent' ? "bg-red-600 border-red-500 text-white font-bold shadow-lg shadow-red-900/50" : "text-red-400 hover:bg-red-900 hover:text-white")}
+              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors border border-red-900 bg-red-950/30 mt-2", activeTab === 'agent' ? "bg-red-600 border-red-500 text-white font-bold shadow-lg shadow-red-900/50" : "text-red-400 hover:bg-red-900 hover:text-white")}
             >
               <ShieldAlert className="w-4 h-4"/> AI Operations Agent
             </button>
@@ -592,11 +614,24 @@ function AdminDashboard() {
                </div>
 
                <div>
-                 <div className="flex justify-between items-center mb-4">
-                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1 inline-block flex items-center gap-2">
+                 <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
                      <Server className="w-5 h-5"/>
                      Active Domain Controllers ({domains.length})
                    </h2>
+                   <button onClick={() => {
+                     const name = window.prompt("Enter App/Domain Name (e.g. app.myapp.com)");
+                     if (!name) return;
+                     const description = window.prompt("Enter Description");
+                     const id = 'd' + Date.now();
+                     fetch('/api/domains', {
+                       method: 'POST',
+                       headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ id, name, description: description || '' })
+                     }).then(fetchAll);
+                   }} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 uppercase tracking-wide transition-colors">
+                     <Plus className="w-4 h-4"/> Add App
+                   </button>
                  </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                    {domains.map(d => (
@@ -1016,6 +1051,106 @@ function AdminDashboard() {
             </div>
           )}
 
+          {/* AGENTS MANAGEMENT TAB */}
+          {activeTab === 'agents_management' && (
+            <div className="animate-in fade-in duration-300">
+              <div className="flex items-center justify-between mb-4">
+                 <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1">Agents Matrix</h2>
+                 <button onClick={() => setEditingAgentId('new')} className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide transition-colors">
+                   <Plus className="w-4 h-4"/> Create Agent
+                 </button>
+              </div>
+
+              {editingAgentId === 'new' && (
+                 <div className="bg-orange-950 border-2 border-orange-600 p-6 rounded-lg mb-6 shadow-xl">
+                   <h3 className="text-orange-400 font-bold uppercase tracking-widest mb-4">Initialize New Neural Network</h3>
+                   <div className="space-y-4">
+                     <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Agent Name</label>
+                       <input value={newAgentForm.name} onChange={e => setNewAgentForm({...newAgentForm, name: e.target.value})} type="text" className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white" placeholder="E.g. Database Guardian" />
+                     </div>
+                     <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Model Architecture</label>
+                       <input value={newAgentForm.model} onChange={e => setNewAgentForm({...newAgentForm, model: e.target.value})} type="text" className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white" />
+                     </div>
+                     <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Agent Role</label>
+                       <select value={newAgentForm.role} onChange={e => setNewAgentForm({...newAgentForm, role: e.target.value})} className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white">
+                          <option value="operator">Operator</option>
+                          <option value="admin">Administrator</option>
+                          <option value="analyst">Data Analyst</option>
+                       </select>
+                     </div>
+                     <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">API Key (Leave blank to use base key)</label>
+                       <input value={newAgentForm.apiKey} onChange={e => setNewAgentForm({...newAgentForm, apiKey: e.target.value})} type="password" placeholder="AI Studio Secret Key..." className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white font-mono text-xs" />
+                     </div>
+                     <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">System Instruction (Core Directives)</label>
+                       <textarea value={newAgentForm.instruction} onChange={e => setNewAgentForm({...newAgentForm, instruction: e.target.value})} className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white font-mono text-xs" rows={5} placeholder="Inject core directives and operational boundaries..."></textarea>
+                     </div>
+                   </div>
+                   <div className="flex justify-end gap-3 mt-4">
+                     <button onClick={() => setEditingAgentId(null)} className="px-4 py-2 border border-orange-800 text-orange-300 hover:text-white rounded uppercase text-sm font-bold transition-colors">Abort</button>
+                     <button onClick={async () => {
+                       const { name, model, instruction, role, apiKey } = newAgentForm;
+                       if (!name || !instruction) return;
+                       await fetch('/api/agents', {
+                         method: 'POST',
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ id: 'ag' + Date.now(), name, model, system_instruction: instruction, role, api_key: apiKey })
+                       });
+                       setEditingAgentId(null);
+                       setNewAgentForm({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '' }); // reset form
+                       fetchAll();
+                     }} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded uppercase text-sm font-bold flex items-center gap-2 shadow-lg shadow-red-900 transition-colors">
+                        <Save className="w-4 h-4"/> Initialize Agent
+                     </button>
+                   </div>
+                 </div>
+              )}
+
+              <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                <table className="min-w-full divide-y divide-orange-900">
+                  <thead className="bg-orange-950">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">ID / Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Role</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Model</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Created At</th>
+                      <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-orange-900 text-sm">
+                    {agents.map(ag => (
+                      <tr key={ag.id} className="hover:bg-orange-950/30">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="font-bold text-white flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-red-500" /> {ag.name}</div>
+                          <div className="text-orange-500 text-xs font-mono">{ag.id}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-orange-300 font-mono text-xs uppercase">{ag.role || 'operator'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-orange-300 font-mono text-xs">{ag.model}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-orange-300 text-xs">{new Date(ag.created_at).toLocaleString()}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right font-medium flex gap-3 justify-end items-center">
+                          <button onClick={() => {
+                            setViewingAgentVersionsId(ag.id);
+                            fetchAgentVersions(ag.id);
+                          }} className="text-orange-400 hover:text-white transition-colors uppercase text-xs font-bold border border-orange-800 rounded px-2 py-1 bg-black">Versioning</button>
+                          <button onClick={async () => {
+                            if (window.confirm('Eradicate neural network?')) {
+                              await fetch(`/api/agents/${ag.id}`, { method: 'DELETE' });
+                              fetchAll();
+                            }
+                          }} className="text-red-600 hover:text-red-400 transition-colors" title="Decommission Agent"><Trash2 className="w-5 h-5"/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* AGENT TAB */}
           {activeTab === 'agent' && (
             <div className="h-full flex flex-col animate-in fade-in duration-300 relative z-0">
@@ -1024,6 +1159,16 @@ function AdminDashboard() {
                  <h2 className="text-lg font-bold text-white uppercase tracking-widest text-red-500 border-b-2 border-red-600 pb-1 flex items-center gap-2 bg-black/50 px-2 rounded backdrop-blur">
                    <ShieldAlert className="w-5 h-5"/> AI Operations Agent
                  </h2>
+                 <select 
+                   value={selectedAgentId} 
+                   onChange={(e) => setSelectedAgentId(e.target.value)} 
+                   className="bg-black border border-red-900 text-white p-2 rounded text-sm font-bold shadow-[0_0_10px_rgba(220,38,38,0.3)] outline-none"
+                 >
+                   <option value="">-- Connect Neural Engine --</option>
+                   {agents.map(ag => (
+                     <option key={ag.id} value={ag.id}>{ag.name} ({ag.model})</option>
+                   ))}
+                 </select>
                </div>
                
                <div className="flex-1 bg-black/80 backdrop-blur z-10 border border-red-900 rounded font-mono p-4 overflow-y-auto text-sm space-y-3 mb-4 shadow-[inset_0_0_20px_rgba(220,38,38,0.3)] flex flex-col">
@@ -1034,12 +1179,17 @@ function AdminDashboard() {
                   ))}
                </div>
 
+               <div className="flex gap-2 z-10 mb-2">
+                 <button onClick={() => setAgentInput("Repair utubecha.com by updating the hero subtitle to 'Fast and responsive video tooling'")} className="bg-black border border-orange-900 text-orange-400 hover:bg-orange-950 px-3 py-1 rounded text-xs font-bold transition-colors">Quick: Repair Component Data</button>
+                 <button onClick={() => setAgentInput("Analyze user growth and visits across all domains")} className="bg-black border border-orange-900 text-orange-400 hover:bg-orange-950 px-3 py-1 rounded text-xs font-bold transition-colors">Quick: Analyze Traffic</button>
+                 <button onClick={() => setAgentInput("Deploy a new marketing banner to mycanvaslab.com")} className="bg-black border border-orange-900 text-orange-400 hover:bg-orange-950 px-3 py-1 rounded text-xs font-bold transition-colors">Quick: Inject Campaign</button>
+               </div>
                <form onSubmit={submitAgentCommand} className="flex gap-2 z-10">
                  <input 
                    type="text" 
                    value={agentInput}
                    onChange={e => setAgentInput(e.target.value)}
-                   placeholder="Enter operation command (e.g. 'Deploy hotfix to utubecha.com' or 'Ban malicious IPs')..."
+                   placeholder="Enter operation command (e.g. 'Fix hero title on utubecha' or 'Ban malicious IPs')..."
                    className="flex-1 bg-black/80 backdrop-blur border border-red-900 text-white font-mono p-3 rounded focus:ring-2 focus:ring-red-500 outline-none placeholder-red-900/50 shadow-inner"
                  />
                  <button type="submit" className="bg-red-600 hover:bg-red-500 text-white font-bold uppercase tracking-widest px-6 py-3 rounded flex items-center gap-2 shadow-[0_0_15px_rgba(220,38,38,0.6)] transition-colors">
@@ -1180,6 +1330,65 @@ function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {viewingAgentVersionsId && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-orange-950 border-2 border-orange-600 rounded-xl max-w-4xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-6 border-b border-orange-800 pb-2 shrink-0">
+              <h3 className="text-xl font-bold text-white uppercase tracking-widest flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-red-500"/>
+                Version History Explorer
+              </h3>
+              <button onClick={() => {
+                setViewingAgentVersionsId(null);
+                setAgentVersions([]);
+              }} className="text-orange-500 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
+            </div>
+            
+            <div className="overflow-y-auto w-full pr-2 space-y-4 font-mono">
+              {agentVersions.length === 0 ? (
+                <div className="text-orange-400 text-center py-10 uppercase font-bold text-sm tracking-widest">No previous versions retrieved.</div>
+              ) : (
+                agentVersions.map(av => (
+                  <div key={av.id} className="bg-black border border-orange-800 rounded p-4 relative group">
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="text-white font-bold text-sm uppercase tracking-widest">Version: {new Date(av.created_at).toLocaleString()}</div>
+                      <div className="text-orange-500 text-xs">ID: {av.id}</div>
+                    </div>
+                    <div className="text-xs text-orange-300 font-bold mb-1">Model Architecture:</div>
+                    <div className="bg-orange-950/50 p-2 rounded border border-orange-900 text-orange-400 mb-3">{av.model}</div>
+                    <div className="text-xs text-orange-300 font-bold mb-1">Core Directives:</div>
+                    <div className="bg-orange-950/50 p-2 rounded border border-orange-900 text-orange-400 whitespace-pre-wrap">{av.system_instruction}</div>
+                    <div className="mt-4 flex justify-end">
+                      <button onClick={async () => {
+                        if (window.confirm("Rollback strictly overrides current logic matrix. Proceed?")) {
+                          await fetch(`/api/agents/${viewingAgentVersionsId}/versions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model: av.model, system_instruction: av.system_instruction })
+                          });
+                          fetchAgentVersions(viewingAgentVersionsId);
+                          fetchAll();
+                        }
+                      }} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded-sm uppercase tracking-widest text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shadow-[0_0_10px_rgba(234,88,12,0.5)]"><Save className="w-3 h-3"/> Revert Core To This Build</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div className="mt-6 flex justify-end gap-3 shrink-0">
+              <button onClick={() => {
+                setViewingAgentVersionsId(null);
+                setAgentVersions([]);
+              }} className="px-4 py-2 border border-orange-800 text-orange-300 hover:text-white rounded uppercase text-sm font-bold transition-colors">
+                Close Explorer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

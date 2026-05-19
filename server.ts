@@ -79,7 +79,38 @@ function initSchema() {
       value JSON NOT NULL,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      model TEXT DEFAULT 'gemini-3-flash-preview',
+      system_instruction TEXT NOT NULL,
+      role TEXT DEFAULT 'operator',
+      api_key TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_versions (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      system_instruction TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agent_id) REFERENCES agents (id) ON DELETE CASCADE
+    );
   `);
+
+  try {
+    db.prepare('ALTER TABLE agents ADD COLUMN role TEXT DEFAULT "operator"').run();
+  } catch (e) {
+    // Column might already exist
+  }
+
+  try {
+    db.prepare('ALTER TABLE agents ADD COLUMN api_key TEXT').run();
+  } catch (e) {
+    // Column might already exist
+  }
 
   const count = db.prepare('SELECT count(*) as count FROM domains').get() as { count: number };
   if (count.count === 0) {
@@ -101,6 +132,10 @@ function initSchema() {
       
       // Initialize some settings
       db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('auth', JSON.stringify({ require2fa: false, sessionTimeoutHours: 24, passwordComplexity: 'medium' }));
+
+      // Initialize default agent
+      db.prepare('INSERT INTO agents (id, name, system_instruction) VALUES (?, ?, ?)').run('agent1', 'Nexus Core Engine', 'You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.');
+      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v1', 'agent1', 'gemini-3-flash-preview', 'You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.');
 
       // Seed some mock visits
       db.prepare('INSERT INTO visits (id, domain_id, ip_address, country, user_agent, referrer) VALUES (?, ?, ?, ?, ?, ?)').run('v1', 'd1', '192.168.1.1', 'US', 'Mozilla/5.0', 'google.com');
@@ -182,14 +217,28 @@ async function startServer() {
 
   app.post("/api/agent", async (req, res) => {
     try {
-      const { instruction } = req.body;
+      const { instruction, agent_id } = req.body;
       systemLog('INFO', 'Agent', `Processing instruction: ${instruction}`);
       
-      const apiKey = process.env.GEMINI_API_KEY;
+      let apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
       
+      let systemInstruction = "You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.";
+      let aiModel = "gemini-3-flash-preview";
+
+      if (agent_id) {
+        const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agent_id) as any;
+        if (agent) {
+          systemInstruction = agent.system_instruction;
+          aiModel = agent.model;
+          if (agent.api_key) {
+            apiKey = agent.api_key;
+          }
+        }
+      }
+
       const ai = new GoogleGenAI({ apiKey });
-      
+
       const agentTools = {
         functionDeclarations: [
           {
@@ -218,8 +267,6 @@ async function startServer() {
         ]
       };
 
-      const systemInstruction = "You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed to calculate growth rates or summaries. Be concise, authoritative, and helpful.";
-
       const contents: any[] = [
         { role: "user", parts: [{ text: instruction }] }
       ];
@@ -231,7 +278,7 @@ async function startServer() {
       while (keepRunning && iterations < 5) {
         iterations++;
         const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
+          model: aiModel,
           contents,
           config: {
             systemInstruction,
@@ -433,6 +480,57 @@ async function startServer() {
     try {
       const visits = db.prepare(`SELECT v.*, d.name as domain_name FROM visits v JOIN domains d ON v.domain_id = d.id ORDER BY v.created_at DESC`).all();
       res.json(visits);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents", (req, res) => {
+    try {
+      res.json(db.prepare('SELECT * FROM agents ORDER BY created_at DESC').all());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/versions", (req, res) => {
+    try {
+      res.json(db.prepare('SELECT * FROM agent_versions WHERE agent_id = ? ORDER BY created_at DESC').all(req.params.id));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/agents/:id/versions", (req, res) => {
+    try {
+      const { model, system_instruction } = req.body;
+      const vId = 'agv' + Date.now();
+      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run(vId, req.params.id, model, system_instruction);
+      db.prepare('UPDATE agents SET model = ?, system_instruction = ? WHERE id = ?').run(model, system_instruction, req.params.id);
+      res.json({ success: true, id: vId });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/agents", (req, res) => {
+    try {
+      const { id, name, model, system_instruction, role, api_key } = req.body;
+      systemLog('INFO', 'Agent', `Creating agent ${name}`);
+      db.prepare('INSERT INTO agents (id, name, model, system_instruction, role, api_key) VALUES (?, ?, ?, ?, ?, ?)').run(id, name, model || 'gemini-3-flash-preview', system_instruction, role || 'operator', api_key || null);
+      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v' + Date.now(), id, model || 'gemini-3-flash-preview', system_instruction);
+      res.json({ success: true, id });
+    } catch (e: any) {
+      systemLog('ERROR', 'Agent', `Failed to create agent: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/agents/:id", (req, res) => {
+    try {
+      systemLog('WARN', 'Agent', `Deleting agent ${req.params.id}`);
+      db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
