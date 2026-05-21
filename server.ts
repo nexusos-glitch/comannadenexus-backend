@@ -404,6 +404,30 @@ async function startServer() {
     }
   });
 
+  app.post("/api/auth/login", (req, res) => {
+    try {
+      const { email, password } = req.body;
+      let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+      if (!user) {
+         if (password === 'admin' || email === 'nexusos@commandnexus.net') {
+             const id = 'u_' + Date.now();
+             db.prepare('INSERT INTO users (id, email, role) VALUES (?, ?, ?)').run(id, email, 'admin');
+             user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+         } else {
+             return res.status(401).json({ error: "Invalid identity or passcode" });
+         }
+      } else {
+         if (password !== 'admin' && password !== 'password') {
+             return res.status(401).json({ error: "Invalid passcode (try 'admin')" });
+         }
+      }
+      db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+      res.json({ success: true, user });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/users", (req, res) => {
     try {
       res.json(db.prepare('SELECT * FROM users').all());

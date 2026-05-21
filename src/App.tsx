@@ -8,11 +8,12 @@ import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from '
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import cnLogo from './assets/images/command_nexus_logo_1779369627626.png';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -262,9 +263,64 @@ function DynamicFrontend() {
 }
 
 
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        localStorage.setItem('nexus_auth', 'true');
+        onLogin();
+      } else {
+        setError(data.error || 'Authentication failed');
+      }
+    } catch(err) {
+      setError('System unavailable');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="bg-orange-950 border border-orange-800 p-8 rounded-lg shadow-2xl max-w-md w-full relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-600 to-orange-500"></div>
+        <div className="flex justify-center mb-6 text-orange-500">
+           <LockKeyhole className="w-12 h-12" />
+        </div>
+        <h2 className="text-2xl font-black text-white uppercase tracking-widest text-center mb-6">Nexus OS Login</h2>
+        {error && <div className="bg-red-900 border border-red-500 text-red-200 p-3 rounded mb-4 text-sm font-bold uppercase tracking-wide text-center">{error}</div>}
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+             <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Passcode / Email</label>
+             <input type="text" value={email} onChange={e => setEmail(e.target.value)} required className="w-full bg-black border border-orange-700 focus:border-red-500 rounded p-3 text-white font-mono text-sm outline-none" placeholder="nexusos@commandnexus.net" />
+          </div>
+          <div>
+             <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Clearance Code</label>
+             <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full bg-black border border-orange-700 focus:border-red-500 rounded p-3 text-white font-mono text-sm outline-none" placeholder="••••••••" />
+          </div>
+          <button type="submit" className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 uppercase tracking-widest rounded mt-4 transition-colors hover:shadow-[0_0_15px_rgba(220,38,38,0.5)]">
+            Authorize Access
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // --- ADMIN DASHBOARD ---
 
 function AdminDashboard() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('nexus_auth') === 'true');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   
   const [domains, setDomains] = useState<any[]>([]);
@@ -305,8 +361,14 @@ function AdminDashboard() {
   };
 
   useEffect(() => {
-    fetchAll();
-  }, []);
+    if (isLoggedIn) {
+      fetchAll();
+    }
+  }, [isLoggedIn]);
+
+  if (!isLoggedIn) {
+     return <LoginScreen onLogin={() => setIsLoggedIn(true)} />;
+  }
 
   // -- Component Edit State --
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -463,89 +525,88 @@ function AdminDashboard() {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
+  const navItems = [
+    { id: 'overview', icon: Server, label: 'Overview' },
+    { id: 'members', icon: Users, label: 'Member Access' },
+    { id: 'ads', icon: Megaphone, label: 'Advertising' },
+    { id: 'traffic', icon: LineChart, label: 'Server Traffic' },
+    { id: 'config', icon: Layers, label: 'Interface Config' },
+    { id: 'sql', icon: Database, label: 'SQL Engine' },
+    { id: 'logs', icon: Terminal, label: 'System Events' },
+    { id: 'agents_management', icon: Settings, label: 'Agents Matrix' },
+    { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true }
+  ];
+
   return (
-    <div className="min-h-screen flex bg-black text-white font-sans selection:bg-orange-500 selection:text-white">
-      {/* Sidebar */}
-      <div className="w-64 bg-orange-950 border-r border-orange-900 flex flex-col">
+    <div className="min-h-screen flex flex-col md:flex-row bg-black text-white font-sans selection:bg-orange-500 selection:text-white pb-16 md:pb-0">
+      
+      {/* Mobile Menu Overlay */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex">
+          <div className="w-64 bg-orange-950 border-r border-orange-900 flex flex-col h-full relative">
+              <div className="p-4 border-b border-orange-900 font-bold flex items-center justify-between tracking-widest text-orange-500">
+                <div className="flex items-center gap-2">
+                  <img src={cnLogo} alt="Logo" className="w-6 h-6 rounded-sm" />
+                  CMD_CTRL
+                </div>
+                <button onClick={() => setIsMobileMenuOpen(false)} className="text-orange-500"><X className="w-6 h-6"/></button>
+              </div>
+             <div className="flex-1 overflow-y-auto py-4">
+               <nav className="space-y-1 px-2">
+                 {navItems.map(item => (
+                   <button key={item.id} onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }} className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === item.id ? (item.isRed ? "bg-red-600 border-red-500 text-white font-bold shadow-lg shadow-red-900/50" : "bg-orange-600 text-white font-bold") : (item.isRed ? "text-red-400 border border-red-900 hover:bg-red-900 hover:text-white mt-4" : "text-orange-200 hover:bg-orange-900 hover:text-white"))}> 
+                     <item.icon className="w-4 h-4" /> {item.label}
+                   </button>
+                 ))}
+               </nav>
+             </div>
+          </div>
+          <div className="flex-1" onClick={() => setIsMobileMenuOpen(false)}></div>
+        </div>
+      )}
+
+      {/* Desktop Sidebar */}
+      <div className="hidden md:flex w-64 bg-orange-950 border-r border-orange-900 flex-col shrink-0">
         <div className="p-4 border-b border-orange-900 font-bold flex items-center gap-2 tracking-widest text-orange-500">
-          <ShieldAlert className="w-5 h-5 text-red-500" />
+          <img src={cnLogo} alt="Logo" className="w-6 h-6 rounded-sm" />
           CMD_CTRL
         </div>
         <div className="flex-1 overflow-y-auto py-4">
           <nav className="space-y-1 px-2">
-            <button 
-              onClick={() => setActiveTab('overview')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'overview' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Server className="w-4 h-4"/> Overview
-            </button>
-            <button 
-              onClick={() => setActiveTab('members')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'members' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Users className="w-4 h-4"/> Member Access
-            </button>
-            <button 
-              onClick={() => setActiveTab('ads')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'ads' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Megaphone className="w-4 h-4"/> Advertising
-            </button>
-            <button 
-              onClick={() => setActiveTab('traffic')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'traffic' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <LineChart className="w-4 h-4"/> Server Traffic
-            </button>
-            <button 
-              onClick={() => setActiveTab('config')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'config' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Layers className="w-4 h-4"/> Interface Config
-            </button>
-            <button 
-              onClick={() => setActiveTab('sql')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'sql' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Database className="w-4 h-4"/> SQL Engine
-            </button>
-            <button 
-              onClick={() => setActiveTab('logs')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'logs' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Terminal className="w-4 h-4"/> System Events
-            </button>
-            <button 
-              onClick={() => setActiveTab('agents_management')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === 'agents_management' ? "bg-orange-600 text-white font-bold" : "text-orange-200 hover:bg-orange-900 hover:text-white")}
-            >
-              <Settings className="w-4 h-4"/> Agents Matrix
-            </button>
-            <button 
-              onClick={() => setActiveTab('agent')} 
-              className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors border border-red-900 bg-red-950/30 mt-2", activeTab === 'agent' ? "bg-red-600 border-red-500 text-white font-bold shadow-lg shadow-red-900/50" : "text-red-400 hover:bg-red-900 hover:text-white")}
-            >
-              <ShieldAlert className="w-4 h-4"/> AI Operations Agent
-            </button>
+            {navItems.map(item => (
+              <button key={item.id} onClick={() => setActiveTab(item.id)} className={cn("w-full flex items-center gap-2 px-4 py-2 rounded-md transition-colors", activeTab === item.id ? (item.isRed ? "bg-red-600 border-red-500 text-white font-bold shadow-lg shadow-red-900/50" : "bg-orange-600 text-white font-bold") : (item.isRed ? "text-red-400 border border-red-900 hover:bg-red-900 hover:text-white mt-4" : "text-orange-200 hover:bg-orange-900 hover:text-white"))}> 
+                <item.icon className="w-4 h-4" /> {item.label}
+              </button>
+            ))}
           </nav>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="border-b border-orange-900 px-6 py-4 flex items-center justify-between bg-black">
-          <h1 className="text-xl font-bold text-orange-500 uppercase tracking-wider">
-            {activeTab === 'overview' && 'System Overview'}
-            {activeTab === 'config' && 'Dynamic Configurations Engine'}
-            {activeTab === 'sql' && 'Database Direct Access'}
-            {activeTab === 'logs' && 'Real-time Event Stream'}
-          </h1>
-          <div className="flex items-center gap-2 text-sm text-red-500 font-mono animate-pulse font-bold">
-            <span className="w-2 h-2 rounded-full bg-red-500"></span> CONNECTION SECURE
+        <header className="border-b border-orange-900 px-4 md:px-6 py-4 flex items-center justify-between bg-black shrink-0">
+          <div className="flex items-center gap-3">
+            <button className="md:hidden text-orange-500 hover:text-white" onClick={() => setIsMobileMenuOpen(true)}>
+              <Menu className="w-6 h-6" />
+            </button>
+            <h1 className="text-lg md:text-xl font-bold text-orange-500 uppercase tracking-wider hidden sm:block">
+              {navItems.find(i => i.id === activeTab)?.label || 'System Overview'}
+            </h1>
+          </div>
+          <div className="flex items-center gap-4 md:gap-6">
+            <div className="flex items-center gap-2 text-xs md:text-sm text-red-500 font-mono animate-pulse font-bold">
+              <span className="w-2 h-2 rounded-full bg-red-500"></span> <span className="hidden sm:inline">CONNECTION SECURE</span>
+            </div>
+            <button onClick={() => {
+              localStorage.removeItem('nexus_auth');
+              setIsLoggedIn(false);
+            }} className="text-orange-500 hover:text-white uppercase tracking-widest text-xs font-bold border border-orange-800 px-2 md:px-3 py-1 rounded transition-colors whitespace-nowrap">
+              Disconnect
+            </button>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
           
           {/* OVERVIEW TAB */}
           {activeTab === 'overview' && (
@@ -1392,6 +1453,25 @@ function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom Navbar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 max-w-[100vw] overflow-x-auto bg-black border-t border-orange-900 flex items-center z-40 pb-safe">
+         <div className="flex items-center px-2 py-2 gap-2 min-w-max">
+           {navItems.map(item => (
+              <button 
+                key={item.id} 
+                onClick={() => setActiveTab(item.id)} 
+                className={cn(
+                  "flex flex-col items-center justify-center min-w-[70px] w-[70px] h-14 rounded-lg transition-colors px-1", 
+                  activeTab === item.id ? (item.isRed ? "text-red-500 bg-red-950/30 font-bold" : "text-orange-500 bg-orange-900/30 font-bold") : (item.isRed ? "text-red-700 hover:text-red-500" : "text-orange-400 hover:text-orange-300")
+                )}
+              > 
+                <item.icon className="w-5 h-5 mb-1 shrink-0" />
+                <span className="text-[10px] uppercase text-center leading-tight line-clamp-1 w-full truncate">{item.label}</span>
+              </button>
+           ))}
+         </div>
+      </div>
 
     </div>
   );
