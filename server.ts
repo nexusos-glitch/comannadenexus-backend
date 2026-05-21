@@ -297,7 +297,8 @@ async function startServer() {
         messages.push(message);
 
         if (message.tool_calls && message.tool_calls.length > 0) {
-          for (const tc of message.tool_calls) {
+          for (const rawTc of message.tool_calls) {
+            const tc = rawTc as any;
             let toolOutput: any;
             
             if (tc.function.name === "runSql") {

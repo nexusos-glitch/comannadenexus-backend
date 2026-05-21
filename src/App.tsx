@@ -8,7 +8,7 @@ import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from '
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -340,6 +340,41 @@ function AdminDashboard() {
     const data = await res.json();
     setAgentVersions(data);
   };
+
+  const exportVisitsCSV = () => {
+    if (!visits || visits.length === 0) return;
+    const headers = ['ID', 'Domain', 'IP Address', 'Country', 'User Agent', 'Referrer', 'Created At'];
+    const rows = visits.map(v => [
+      v.id,
+      v.domain_name || v.domain_id,
+      v.ip_address,
+      v.country,
+      v.user_agent,
+      v.referrer,
+      new Date(v.created_at).toLocaleString()
+    ]);
+    
+    const escapeCsv = (str: any) => {
+      if (str == null) return '';
+      const s = String(str);
+      if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+
+    const csvContent = [
+      headers.map(escapeCsv).join(','),
+      ...rows.map(row => row.map(escapeCsv).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `server_traffic_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  };
+
 
 
   const fetchAll = async () => {
@@ -819,8 +854,17 @@ function AdminDashboard() {
             <div className="animate-in fade-in duration-300 space-y-6">
                <div className="flex justify-between items-center">
                  <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1 inline-block">Server Traffic Analytics</h2>
-                 <div className="flex items-center gap-2 text-sm text-green-500 font-bold uppercase animate-pulse">
-                   <span className="w-3 h-3 bg-green-500 rounded-full inline-block"></span> Sentinel Active
+                 <div className="flex items-center gap-4">
+                   <button 
+                     onClick={exportVisitsCSV}
+                     className="flex items-center gap-2 bg-orange-950 border border-orange-800 hover:bg-orange-900 text-orange-400 hover:text-white px-3 py-1.5 rounded uppercase text-xs font-bold transition-colors"
+                     title="Export CSV"
+                   >
+                     <Download className="w-4 h-4" /> Export CSV
+                   </button>
+                   <div className="flex items-center gap-2 text-sm text-green-500 font-bold uppercase animate-pulse">
+                     <span className="w-3 h-3 bg-green-500 rounded-full inline-block"></span> Sentinel Active
+                   </div>
                  </div>
                </div>
               
