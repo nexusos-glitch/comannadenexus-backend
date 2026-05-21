@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { EventEmitter } from 'events';
-import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,7 +83,7 @@ function initSchema() {
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      model TEXT DEFAULT 'gemini-3-flash-preview',
+      model TEXT DEFAULT 'gpt-4o',
       system_instruction TEXT NOT NULL,
       role TEXT DEFAULT 'operator',
       api_key TEXT,
@@ -135,7 +135,7 @@ function initSchema() {
 
       // Initialize default agent
       db.prepare('INSERT INTO agents (id, name, system_instruction) VALUES (?, ?, ?)').run('agent1', 'Nexus Core Engine', 'You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.');
-      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v1', 'agent1', 'gemini-3-flash-preview', 'You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.');
+      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v1', 'agent1', 'gpt-4o', 'You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.');
 
       // Seed some mock visits
       db.prepare('INSERT INTO visits (id, domain_id, ip_address, country, user_agent, referrer) VALUES (?, ?, ?, ?, ?, ?)').run('v1', 'd1', '192.168.1.1', 'US', 'Mozilla/5.0', 'google.com');
@@ -153,7 +153,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50gb' }));
 
   // Logging middleware
   app.use((req, res, next) => {
@@ -220,55 +220,65 @@ async function startServer() {
       const { instruction, agent_id } = req.body;
       systemLog('INFO', 'Agent', `Processing instruction: ${instruction}`);
       
-      let apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
+      let apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error("OPENAI_API_KEY is not set.");
       
       let systemInstruction = "You are the Nexus OS AI Operations Agent. You manage web apps, users, ads, and system traffic using the runSql tool. For data interpretation tasks, first fetch data using runSql, then process it using analyzeData if needed. If asked to fix or edit an app, modify the components using runSql. Be concise, authoritative, and helpful.";
-      let aiModel = "gemini-3-flash-preview";
+      let aiModel = "gpt-4o";
 
       if (agent_id) {
         const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agent_id) as any;
         if (agent) {
           systemInstruction = agent.system_instruction;
-          aiModel = agent.model;
+          if (agent.model && agent.model.includes('gpt')) {
+            aiModel = agent.model;
+          } else {
+             // Default if they had gemini set before
+             aiModel = 'gpt-4o';
+          }
           if (agent.api_key) {
             apiKey = agent.api_key;
           }
         }
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      const openai = new OpenAI({ apiKey });
 
-      const agentTools = {
-        functionDeclarations: [
-          {
+      const tools: any[] = [
+        {
+          type: "function",
+          function: {
             name: "runSql",
             description: "Execute a sqlite SQL query. Table schemas: domains(id, name, description), components(id, domain_id, type, visible, config, updated_at), users(id, email, role, is_banned, created_at, last_login), ads(id, domain_id, campaign_name, active, config, created_at), visits(id, domain_id, ip_address, country, user_agent, referrer, created_at), settings(key, value, updated_at). Returns either JSON array of rows or changes count.",
             parameters: {
-              type: Type.OBJECT,
+              type: "object",
               properties: {
-                query: { type: Type.STRING }
+                query: { type: "string" }
               },
               required: ["query"]
             }
-          },
-          {
+          }
+        },
+        {
+          type: "function",
+          function: {
             name: "analyzeData",
             description: "Perform data processing or mathematical analysis on given data. Use this after fetching data with runSql to compute growth rates, sums, or statistical summaries before responding.",
             parameters: {
-              type: Type.OBJECT,
+              type: "object",
               properties: {
-                operation: { type: Type.STRING, description: "The operation to perform (e.g., 'growth_rate', 'sum', 'average', 'count')" },
-                data: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Array of numeric values to analyze. For growth_rate, provide [previousValue, currentValue]." }
+                operation: { type: "string", description: "The operation to perform (e.g., 'growth_rate', 'sum', 'average', 'count')" },
+                data: { type: "array", items: { type: "number" }, description: "Array of numeric values to analyze. For growth_rate, provide [previousValue, currentValue]." }
               },
               required: ["operation", "data"]
             }
           }
-        ]
-      };
+        }
+      ];
 
-      const contents: any[] = [
-        { role: "user", parts: [{ text: instruction }] }
+      const messages: any[] = [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: instruction }
       ];
 
       let resultText = "";
@@ -277,26 +287,21 @@ async function startServer() {
 
       while (keepRunning && iterations < 5) {
         iterations++;
-        const response = await ai.models.generateContent({
+        const response = await openai.chat.completions.create({
           model: aiModel,
-          contents,
-          config: {
-            systemInstruction,
-            tools: [agentTools],
-            toolConfig: { includeServerSideToolInvocations: true }
-          }
+          messages,
+          tools
         });
 
-        const functionCalls = response.functionCalls;
-        
-        if (functionCalls && functionCalls.length > 0) {
-          contents.push(response.candidates![0].content);
-          
-          for (const fc of functionCalls) {
+        const message = response.choices[0].message;
+        messages.push(message);
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          for (const tc of message.tool_calls) {
             let toolOutput: any;
             
-            if (fc.name === "runSql") {
-              const args = fc.args as any;
+            if (tc.function.name === "runSql") {
+              const args = JSON.parse(tc.function.arguments);
               systemLog('WARN', 'Agent', `Executing Agent SQL: ${args.query}`);
               try {
                 const stmt = db.prepare(args.query);
@@ -309,8 +314,8 @@ async function startServer() {
               } catch (err: any) {
                  toolOutput = { error: err.message };
               }
-            } else if (fc.name === "analyzeData") {
-              const args = fc.args as any;
+            } else if (tc.function.name === "analyzeData") {
+              const args = JSON.parse(tc.function.arguments);
               systemLog('INFO', 'Agent', `Analyzing data: ${args.operation}`);
               try {
                 const data = args.data as number[];
@@ -333,13 +338,15 @@ async function startServer() {
               }
             }
             
-            contents.push({
-              role: "user",
-              parts: [{ functionResponse: { name: fc.name, response: toolOutput } }]
+            messages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: JSON.stringify(toolOutput)
             });
           }
         } else {
-          resultText = response.text || "";
+          resultText = message.content || "";
           keepRunning = false;
         }
       }
@@ -517,8 +524,8 @@ async function startServer() {
     try {
       const { id, name, model, system_instruction, role, api_key } = req.body;
       systemLog('INFO', 'Agent', `Creating agent ${name}`);
-      db.prepare('INSERT INTO agents (id, name, model, system_instruction, role, api_key) VALUES (?, ?, ?, ?, ?, ?)').run(id, name, model || 'gemini-3-flash-preview', system_instruction, role || 'operator', api_key || null);
-      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v' + Date.now(), id, model || 'gemini-3-flash-preview', system_instruction);
+      db.prepare('INSERT INTO agents (id, name, model, system_instruction, role, api_key) VALUES (?, ?, ?, ?, ?, ?)').run(id, name, model || 'gpt-4o', system_instruction, role || 'operator', api_key || null);
+      db.prepare('INSERT INTO agent_versions (id, agent_id, model, system_instruction) VALUES (?, ?, ?, ?)').run('v' + Date.now(), id, model || 'gpt-4o', system_instruction);
       res.json({ success: true, id });
     } catch (e: any) {
       systemLog('ERROR', 'Agent', `Failed to create agent: ${e.message}`);

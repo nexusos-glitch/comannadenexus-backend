@@ -277,7 +277,7 @@ function AdminDashboard() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [viewingAgentVersionsId, setViewingAgentVersionsId] = useState<string | null>(null);
   const [agentVersions, setAgentVersions] = useState<any[]>([]);
-  const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '' });
+  const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gpt-4o', instruction: '', role: 'operator', apiKey: '' });
 
   const fetchAgentVersions = async (id: string) => {
     const res = await fetch(`/api/agents/${id}/versions`);
@@ -1101,7 +1101,7 @@ function AdminDashboard() {
                          body: JSON.stringify({ id: 'ag' + Date.now(), name, model, system_instruction: instruction, role, api_key: apiKey })
                        });
                        setEditingAgentId(null);
-                       setNewAgentForm({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '' }); // reset form
+                       setNewAgentForm({ name: '', model: 'gpt-4o', instruction: '', role: 'operator', apiKey: '' }); // reset form
                        fetchAll();
                      }} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded uppercase text-sm font-bold flex items-center gap-2 shadow-lg shadow-red-900 transition-colors">
                         <Save className="w-4 h-4"/> Initialize Agent
@@ -1117,6 +1117,7 @@ function AdminDashboard() {
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">ID / Name</th>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Role</th>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Model</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">API Key</th>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Created At</th>
                       <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Actions</th>
                     </tr>
@@ -1130,6 +1131,9 @@ function AdminDashboard() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-orange-300 font-mono text-xs uppercase">{ag.role || 'operator'}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-orange-300 font-mono text-xs">{ag.model}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-orange-300 font-mono text-xs">
+                           {ag.api_key ? '••••••••' : <span className="text-orange-700">System Default</span>}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-orange-300 text-xs">{new Date(ag.created_at).toLocaleString()}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-right font-medium flex gap-3 justify-end items-center">
                           <button onClick={() => {
