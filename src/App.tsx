@@ -8,11 +8,14 @@ import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from '
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend } from 'recharts';
+import { ComposableMap, Geographies, Geography, Sphere, Graticule } from 'react-simple-maps';
+import { scaleLinear } from 'd3-scale';
+import { Tooltip as ReactTooltip } from 'react-tooltip';
 import cnLogo from './assets/images/command_nexus_logo_1779369627626.png';
 
 function cn(...inputs: ClassValue[]) {
@@ -141,6 +144,37 @@ function DynamicFrontend() {
   
   // Member/Campaign specific states
   const [ads, setAds] = useState<any[]>([]);
+  const [memberLoggedIn, setMemberLoggedIn] = useState(false);
+
+  const handleGithubLogin = async () => {
+    try {
+      const response = await fetch('/api/auth/github/url');
+      if (!response.ok) throw new Error('Failed to get auth URL');
+      const { url } = await response.json();
+      
+      const authWindow = window.open(url, 'oauth_popup', 'width=600,height=700');
+      if (!authWindow) {
+        alert('Please allow popups for this site to connect your account.');
+      }
+    } catch (error) {
+      console.error('OAuth error:', error);
+      alert('Failed to initiate login.');
+    }
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        setMemberLoggedIn(true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   useEffect(() => {
     fetch(`/api/config/${domainName}`)
@@ -217,35 +251,63 @@ function DynamicFrontend() {
       {page === 'members' && (
         <div className="max-w-md mx-auto mt-20 p-8 bg-white border-2 border-orange-200 rounded-xl shadow-2xl">
           <h2 className="text-2xl font-black text-center uppercase tracking-widest mb-6">Member Access</h2>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const btn = document.getElementById('auth-btn');
-            if (btn) {
-              btn.textContent = 'Authenticating...';
-              btn.className = "w-full bg-orange-600 text-white font-bold uppercase tracking-widest py-4 rounded mt-4 cursor-wait";
-              setTimeout(() => {
-                btn.textContent = 'Access Denied: Sector Locked';
-                btn.className = "w-full bg-red-600 text-white font-bold uppercase tracking-widest py-4 rounded mt-4 cursor-not-allowed";
-              }, 1500);
-            }
-          }}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-orange-800 uppercase tracking-widest mb-1">Identity</label>
-                <input required type="text" className="w-full border-2 border-orange-200 p-3 outline-none focus:border-orange-500 rounded bg-orange-50" placeholder="Email or UID" />
+          {memberLoggedIn ? (
+            <div className="text-center">
+              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <UserCheck className="w-8 h-8" />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-orange-800 uppercase tracking-widest mb-1">Passphrase</label>
-                <input required type="password" className="w-full border-2 border-orange-200 p-3 outline-none focus:border-orange-500 rounded bg-orange-50" placeholder="••••••••" />
-              </div>
-              <button id="auth-btn" type="submit" className="w-full bg-black text-white font-bold uppercase tracking-widest py-4 rounded mt-4 hover:bg-orange-600 transition-colors">
-                Authenticate
-              </button>
+              <h3 className="text-xl font-bold mb-2">Access Granted</h3>
+              <p className="text-orange-800">You have been successfully authenticated via GitHub. Connection to secure sector established.</p>
+              <button onClick={() => setMemberLoggedIn(false)} className="mt-6 uppercase text-xs font-bold tracking-widest text-orange-600 hover:text-orange-800">Sign Out</button>
             </div>
-          </form>
-          <div className="mt-6 text-center text-sm text-orange-800">
-             Security Note: The Command Center currently enforces strict rate-limits on authentication attempts.
-          </div>
+          ) : (
+            <>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const btn = document.getElementById('auth-btn');
+                if (btn) {
+                  btn.textContent = 'Authenticating...';
+                  btn.className = "w-full bg-orange-600 text-white font-bold uppercase tracking-widest py-4 rounded mt-4 cursor-wait";
+                  setTimeout(() => {
+                    btn.textContent = 'Access Denied: Sector Locked';
+                    btn.className = "w-full bg-red-600 text-white font-bold uppercase tracking-widest py-4 rounded mt-4 cursor-not-allowed";
+                  }, 1500);
+                }
+              }}>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-orange-800 uppercase tracking-widest mb-1">Identity</label>
+                    <input required type="text" className="w-full border-2 border-orange-200 p-3 outline-none focus:border-orange-500 rounded bg-orange-50" placeholder="Email or UID" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-orange-800 uppercase tracking-widest mb-1">Passphrase</label>
+                    <input required type="password" className="w-full border-2 border-orange-200 p-3 outline-none focus:border-orange-500 rounded bg-orange-50" placeholder="••••••••" />
+                  </div>
+                  <button id="auth-btn" type="submit" className="w-full bg-black text-white font-bold uppercase tracking-widest py-4 rounded mt-4 hover:bg-orange-600 transition-colors">
+                    Authenticate
+                  </button>
+                </div>
+              </form>
+
+              <div className="my-6 flex items-center">
+                <div className="flex-1 border-b border-orange-200"></div>
+                <div className="px-3 text-xs font-bold text-orange-400 uppercase tracking-widest">Or Access Via</div>
+                <div className="flex-1 border-b border-orange-200"></div>
+              </div>
+
+              <button 
+                type="button"
+                onClick={handleGithubLogin}
+                className="w-full bg-white border-2 border-black text-black font-bold uppercase tracking-widest py-4 rounded hover:bg-gray-100 transition-colors flex justify-center items-center gap-3"
+              >
+                <Github className="w-5 h-5" /> Authenticate via GitHub
+              </button>
+
+              <div className="mt-6 text-center text-sm text-orange-800">
+                 Security Note: The Command Center currently enforces strict rate-limits on authentication attempts.
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -322,18 +384,113 @@ function AdminDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('nexus_auth') === 'true');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [theme, setTheme] = useState(() => localStorage.getItem('nexus_theme') || 'default');
+  
+  useEffect(() => {
+    localStorage.setItem('nexus_theme', theme);
+    const root = document.documentElement;
+    root.classList.remove('theme-light', 'theme-solarized');
+    if (theme === 'high-contrast') {
+      root.classList.add('theme-light');
+    } else if (theme === 'solarized') {
+      root.classList.add('theme-solarized');
+    }
+  }, [theme]);
+
+  const [showWidgetConfig, setShowWidgetConfig] = useState(false);
+  const [widgetConfig, setWidgetConfig] = useState({
+    systemsOnline: true,
+    accessTokens: true,
+    activeCampaigns: true,
+    networkStress: true
+  });
   
   const [domains, setDomains] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [visits, setVisits] = useState<any[]>([]);
+  const [trafficSearch, setTrafficSearch] = useState('');
+  const [trafficThreshold, setTrafficThreshold] = useState<number>(500);
+  
+  const [alertsLog, setAlertsLog] = useState<any[]>(() => {
+    const saved = localStorage.getItem('nexus_alerts_log');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('nexus_alerts_log', JSON.stringify(alertsLog));
+  }, [alertsLog]);
+
+  useEffect(() => {
+    if (!visits || visits.length === 0) return;
+    
+    setAlertsLog(prevLogs => {
+      let newAlerts: any[] = [];
+      const now = Date.now();
+      
+      const buckets: Record<string, number> = {};
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now - i * 3600 * 1000);
+        buckets[d.toISOString().slice(0, 13)] = 0;
+      }
+      visits.forEach(v => {
+        const k = new Date(v.created_at).toISOString().slice(0, 13);
+        if (buckets[k] !== undefined) buckets[k]++;
+      });
+      
+      Object.entries(buckets).forEach(([hour, count]) => {
+        if (count > trafficThreshold) {
+          const alertId = `vol-${hour}-${trafficThreshold}`;
+          if (!prevLogs.some((a: any) => a.id === alertId) && !newAlerts.some(a => a.id === alertId)) {
+            newAlerts.push({
+              id: alertId,
+              timestamp: new Date(hour + ':00:00Z').getTime(),
+              type: 'Volume Threshold Exceeded',
+              message: `High traffic volume detected. Traffic reached ${count} visits in a single hour.`,
+              severity: 'high'
+            });
+          }
+        }
+      });
+
+      const last24 = visits.filter(v => now - new Date(v.created_at).getTime() <= 24 * 3600 * 1000).length;
+      const prev24 = visits.filter(v => {
+        const diff = now - new Date(v.created_at).getTime();
+        return diff > 24 * 3600 * 1000 && diff <= 48 * 3600 * 1000;
+      }).length;
+      const growthRate = prev24 > 0 ? (last24 - prev24) / prev24 : 0;
+      
+      if (growthRate > 0.25) {
+        const today = new Date().toISOString().slice(0, 10);
+        const alertId = `growth-${today}`;
+        if (!prevLogs.some((a: any) => a.id === alertId) && !newAlerts.some(a => a.id === alertId)) {
+           newAlerts.push({
+             id: alertId,
+             timestamp: now,
+             type: 'Traffic Growth Alert',
+             message: `Traffic increased by ${(growthRate * 100).toFixed(1)}% compared to the previous 24 hours (${last24} vs ${prev24} visits).`,
+             severity: 'medium'
+           });
+        }
+      }
+
+      if (newAlerts.length > 0) {
+        return [...newAlerts, ...prevLogs].sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+      }
+      return prevLogs;
+    });
+  }, [visits, trafficThreshold]);
+
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [viewingAgentVersionsId, setViewingAgentVersionsId] = useState<string | null>(null);
   const [agentVersions, setAgentVersions] = useState<any[]>([]);
-  const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gpt-4o', instruction: '', role: 'operator', apiKey: '' });
+  const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '', personality: 'Default' });
 
   const fetchAgentVersions = async (id: string) => {
     const res = await fetch(`/api/agents/${id}/versions`);
@@ -375,6 +532,51 @@ function AdminDashboard() {
     link.click();
   };
 
+  const exportOverviewReportCSV = () => {
+    const lines = [];
+    lines.push("=== NEXUS OS - OVERVIEW REPORT ===");
+    lines.push(`Generated On: ${new Date().toLocaleString()}`);
+    lines.push("");
+    
+    lines.push("--- KPIS ---");
+    lines.push(`Systems Online,${domains.length}`);
+    lines.push(`Total Access Tokens,${users.length}`);
+    lines.push(`Active Campaigns,${ads.length}`);
+    
+    const trafficByCountry: Record<string, number> = {};
+    const trafficByDomain: Record<string, number> = {};
+    visits.forEach(v => {
+      if (v.country) {
+        let code = v.country.toUpperCase();
+        if (code === 'UK') code = 'GB';
+        trafficByCountry[code] = (trafficByCountry[code] || 0) + 1;
+      }
+      const dName = v.domain_name || v.domain_id || 'Unknown';
+      trafficByDomain[dName] = (trafficByDomain[dName] || 0) + 1;
+    });
+
+    lines.push("");
+    lines.push("--- TRAFFIC BY COUNTRY ---");
+    lines.push("Country Code,Visits");
+    Object.entries(trafficByCountry).sort((a,b)=>b[1]-a[1]).forEach(([country, count]) => {
+      lines.push(`${country},${count}`);
+    });
+
+    lines.push("");
+    lines.push("--- TRAFFIC BY DOMAIN ---");
+    lines.push("Domain,Visits");
+    Object.entries(trafficByDomain).sort((a,b)=>b[1]-a[1]).forEach(([domain, count]) => {
+      lines.push(`${domain},${count}`);
+    });
+
+    const csvContent = lines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `nexus_overview_report_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  };
+
 
 
   const fetchAll = async () => {
@@ -392,14 +594,39 @@ function AdminDashboard() {
     setAds(aRes);
     setVisits(vRes);
     setAgents(agRes);
-    if (!selectedAgentId && agRes.length > 0) setSelectedAgentId(agRes[0].id);
+    setSelectedAgentId(prev => (!prev && agRes.length > 0) ? agRes[0].id : prev);
   };
 
   useEffect(() => {
     if (isLoggedIn) {
       fetchAll();
+      const intervalId = setInterval(fetchAll, 60000);
+      return () => clearInterval(intervalId);
     }
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (visits && visits.length > 0 && activeTab === 'traffic') {
+      const buckets: Record<string, number> = {};
+      const now = Date.now();
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now - i * 3600 * 1000);
+        buckets[d.toISOString().slice(0, 13)] = 0;
+      }
+      visits.forEach(v => {
+        const k = new Date(v.created_at).toISOString().slice(0, 13);
+        if (buckets[k] !== undefined) buckets[k]++;
+      });
+      const hasTrafficSpike = Object.values(buckets).some(v => v >= trafficThreshold);
+      if (hasTrafficSpike) {
+        console.warn(`[SERVER_TRAFFIC_ALERT] High traffic volume detected (${trafficThreshold}+ visits per hour). Action recommended.`);
+        if (typeof window !== 'undefined' && !window.sessionStorage.getItem(`trafficAlertAck_${trafficThreshold}`)) {
+          alert(`SYSTEM ALERT: High traffic volume detected (>${trafficThreshold} visits per hour). Potential bot activity or DDoS. Please review firewall settings.`);
+          window.sessionStorage.setItem(`trafficAlertAck_${trafficThreshold}`, 'true');
+        }
+      }
+    }
+  }, [visits, activeTab, trafficThreshold]);
 
   if (!isLoggedIn) {
      return <LoginScreen onLogin={() => setIsLoggedIn(true)} />;
@@ -565,6 +792,7 @@ function AdminDashboard() {
     { id: 'members', icon: Users, label: 'Member Access' },
     { id: 'ads', icon: Megaphone, label: 'Advertising' },
     { id: 'traffic', icon: LineChart, label: 'Server Traffic' },
+    { id: 'alerts', icon: ShieldAlert, label: 'Alerts Log' },
     { id: 'config', icon: Layers, label: 'Interface Config' },
     { id: 'sql', icon: Database, label: 'SQL Engine' },
     { id: 'logs', icon: Terminal, label: 'System Events' },
@@ -629,6 +857,15 @@ function AdminDashboard() {
             </h1>
           </div>
           <div className="flex items-center gap-4 md:gap-6">
+            <select 
+              value={theme} 
+              onChange={e => setTheme(e.target.value)}
+              className="bg-black border border-orange-800 text-orange-500 rounded px-2 md:px-3 py-1 text-xs font-bold uppercase tracking-widest outline-none cursor-pointer"
+            >
+              <option value="default">Dark Terminal</option>
+              <option value="high-contrast">High Contrast</option>
+              <option value="solarized">Solarized</option>
+            </select>
             <div className="flex items-center gap-2 text-xs md:text-sm text-red-500 font-mono animate-pulse font-bold">
               <span className="w-2 h-2 rounded-full bg-red-500"></span> <span className="hidden sm:inline">CONNECTION SECURE</span>
             </div>
@@ -643,27 +880,106 @@ function AdminDashboard() {
 
         <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
           
+          {(() => {
+            if (!visits || visits.length === 0) return null;
+            const now = Date.now();
+            const last24 = visits.filter(v => now - new Date(v.created_at).getTime() <= 24 * 3600 * 1000).length;
+            const prev24 = visits.filter(v => {
+              const diff = now - new Date(v.created_at).getTime();
+              return diff > 24 * 3600 * 1000 && diff <= 48 * 3600 * 1000;
+            }).length;
+            const growthRate = prev24 > 0 ? (last24 - prev24) / prev24 : 0;
+            
+            if (growthRate > 0.25) {
+              return (
+                <div className="mb-6 bg-red-950/80 border border-red-500 p-4 rounded-lg flex items-start gap-4 shadow-[0_0_15px_rgba(239,68,68,0.3)] duration-1000 animate-in slide-in-from-top-4">
+                  <Activity className="w-6 h-6 text-red-500 mt-0.5 shrink-0 animate-pulse" />
+                  <div>
+                    <h3 className="text-red-400 font-bold uppercase tracking-widest text-sm mb-1">Traffic Growth Alert</h3>
+                    <p className="text-red-200 text-sm">
+                      Traffic has increased by <strong className="text-white font-mono">{(growthRate * 100).toFixed(1)}%</strong> compared to the previous 24 hours. 
+                      ({last24} visits vs {prev24} visits). Immediate review recommended.
+                    </p>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           {/* OVERVIEW TAB */}
           {activeTab === 'overview' && (
             <div className="space-y-8 animate-in fade-in duration-300">
+               {/* TOP KPIS GRID CONTROLS */}
+               <div className="flex justify-between items-end mb-2">
+                 <h2 className="text-xl font-bold text-white uppercase tracking-widest text-orange-500">Dashboard Overview</h2>
+                 <div className="flex items-center gap-4">
+                   <button
+                     onClick={exportOverviewReportCSV}
+                     className="flex items-center gap-2 bg-orange-950 border border-orange-800 hover:bg-orange-900 text-orange-400 hover:text-white px-3 py-1.5 rounded uppercase text-xs font-bold transition-colors"
+                   >
+                     <Download className="w-4 h-4" /> Download Report
+                   </button>
+                   <div className="relative">
+                     <button 
+                       onClick={() => setShowWidgetConfig(!showWidgetConfig)}
+                       className="flex items-center gap-2 bg-orange-950 border border-orange-800 hover:bg-orange-900 text-orange-400 hover:text-white px-3 py-1.5 rounded uppercase text-xs font-bold transition-colors"
+                     >
+                       <Layout className="w-4 h-4" /> Widgets
+                     </button>
+                     {showWidgetConfig && (
+                       <div className="absolute right-0 top-full mt-2 w-64 bg-black border border-orange-800 rounded-lg shadow-xl z-50 p-4">
+                         <h3 className="text-orange-500 font-bold uppercase text-xs tracking-widest mb-3 border-b border-orange-900 pb-1">Widget Config</h3>
+                         <div className="space-y-3">
+                           <label className="flex items-center gap-3 text-orange-200 text-sm cursor-pointer hover:text-white transition-colors">
+                             <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.systemsOnline} onChange={e => setWidgetConfig(prev => ({ ...prev, systemsOnline: e.target.checked }))} />
+                             Systems Online
+                           </label>
+                           <label className="flex items-center gap-3 text-orange-200 text-sm cursor-pointer hover:text-white transition-colors">
+                             <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.accessTokens} onChange={e => setWidgetConfig(prev => ({ ...prev, accessTokens: e.target.checked }))} />
+                             Total Access Tokens
+                           </label>
+                           <label className="flex items-center gap-3 text-orange-200 text-sm cursor-pointer hover:text-white transition-colors">
+                             <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.activeCampaigns} onChange={e => setWidgetConfig(prev => ({ ...prev, activeCampaigns: e.target.checked }))} />
+                             Active Campaigns
+                           </label>
+                           <label className="flex items-center gap-3 text-orange-200 text-sm cursor-pointer hover:text-white transition-colors">
+                             <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.networkStress} onChange={e => setWidgetConfig(prev => ({ ...prev, networkStress: e.target.checked }))} />
+                             Network Stress
+                           </label>
+                         </div>
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               </div>
+               
                {/* TOP KPIS */}
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                 <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
-                   <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Systems Online</div>
-                   <div className="text-4xl text-white font-mono">{domains.length}</div>
-                 </div>
-                 <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
-                   <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Total Access Tokens</div>
-                   <div className="text-4xl text-white font-mono">{users.length}</div>
-                 </div>
-                 <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
-                   <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Active Campaigns</div>
-                   <div className="text-4xl text-white font-mono">{ads.filter(a => a.active).length}</div>
-                 </div>
-                 <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
-                   <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Network Stress</div>
-                   <div className="text-4xl text-red-500 font-mono animate-pulse">{(visits.length * 2.4).toFixed(1)}%</div>
-                 </div>
+                 {widgetConfig.systemsOnline && (
+                   <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
+                     <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Systems Online</div>
+                     <div className="text-4xl text-white font-mono">{domains.length}</div>
+                   </div>
+                 )}
+                 {widgetConfig.accessTokens && (
+                   <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
+                     <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Total Access Tokens</div>
+                     <div className="text-4xl text-white font-mono">{users.length}</div>
+                   </div>
+                 )}
+                 {widgetConfig.activeCampaigns && (
+                   <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
+                     <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Active Campaigns</div>
+                     <div className="text-4xl text-white font-mono">{ads.filter(a => a.active).length}</div>
+                   </div>
+                 )}
+                 {widgetConfig.networkStress && (
+                   <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
+                     <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Network Stress</div>
+                     <div className="text-4xl text-red-500 font-mono animate-pulse">{(visits.length * 2.4).toFixed(1)}%</div>
+                   </div>
+                 )}
                </div>
 
                {/* TRAFFIC CHART */}
@@ -707,6 +1023,216 @@ function AdminDashboard() {
                      </AreaChart>
                    </ResponsiveContainer>
                  </div>
+               </div>
+
+
+               <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg shadow-lg shadow-orange-900/20">
+                 <div className="flex justify-between items-center mb-6 border-b-2 border-orange-600 pb-1">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
+                     <Globe className="w-5 h-5"/>
+                     Domain Traffic Overview
+                   </h2>
+                 </div>
+                 <div className="overflow-x-auto">
+                   <table className="w-full text-left border-collapse">
+                     <thead>
+                       <tr>
+                         <th className="px-4 py-2 border-b border-orange-800 text-orange-400 font-bold uppercase text-xs">Domain</th>
+                         <th className="px-4 py-2 border-b border-orange-800 text-orange-400 font-bold uppercase text-xs">Total Visits</th>
+                         <th className="px-4 py-2 border-b border-orange-800 text-orange-400 font-bold uppercase text-xs">Top Referrers</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {(() => {
+                         const breakdown: Record<string, { visits: number, referrers: Record<string, number> }> = {};
+                         domains.forEach(d => { breakdown[d.name] = { visits: 0, referrers: {} }; });
+                         
+                         visits.forEach(v => {
+                           const name = v.domain_name || v.domain_id || 'Unknown';
+                           if (!breakdown[name]) breakdown[name] = { visits: 0, referrers: {} };
+                           breakdown[name].visits++;
+                           if (v.referrer) {
+                             breakdown[name].referrers[v.referrer] = (breakdown[name].referrers[v.referrer] || 0) + 1;
+                           }
+                         });
+
+                         const sorted = Object.entries(breakdown).sort((a, b) => b[1].visits - a[1].visits);
+                         if (sorted.length === 0) {
+                           return <tr><td colSpan={3} className="px-4 py-4 text-center text-orange-600 text-sm italic">No traffic recorded</td></tr>;
+                         }
+                         return sorted.map(([domain, data]) => {
+                           const topRef = Object.entries(data.referrers)
+                             .sort((a, b) => b[1] - a[1])
+                             .slice(0, 3)
+                             .map(e => `${e[0]} (${e[1]})`)
+                             .join(', ');
+                           return (
+                             <tr key={domain} className="hover:bg-orange-900/30 transition-colors">
+                               <td className="px-4 py-3 border-b border-orange-900/50 text-white font-medium">{domain}</td>
+                               <td className="px-4 py-3 border-b border-orange-900/50 text-orange-300 font-mono text-sm">{data.visits}</td>
+                               <td className="px-4 py-3 border-b border-orange-900/50 text-gray-400 text-sm truncate max-w-xs" title={topRef}>{topRef || 'Direct / None'}</td>
+                             </tr>
+                           );
+                         });
+                       })()}
+                     </tbody>
+                   </table>
+                 </div>
+               </div>
+
+               <div>
+                 <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
+                     <LineChart className="w-5 h-5"/>
+                     Traffic Sources Breakdown
+                   </h2>
+                 </div>
+                 {(() => {
+                   const breakdown: Record<string, { visits: number, referrers: Record<string, number> }> = {};
+                   domains.forEach(d => { breakdown[d.name] = { visits: 0, referrers: {} }; });
+                   
+                   visits.forEach(v => {
+                     const name = v.domain_name || v.domain_id || 'Unknown';
+                     if (!breakdown[name]) breakdown[name] = { visits: 0, referrers: {} };
+                     breakdown[name].visits++;
+                     if (v.referrer) {
+                       breakdown[name].referrers[v.referrer] = (breakdown[name].referrers[v.referrer] || 0) + 1;
+                     }
+                   });
+
+                   return (
+                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                       {Object.entries(breakdown).map(([domain, data]) => {
+                          const sources = {
+                            'Direct': 0,
+                            'Organic Search': 0,
+                            'Social': 0,
+                            'Referral': 0
+                          };
+                          let totalReferrerAttributed = 0;
+                          Object.entries(data.referrers).forEach(([ref, count]) => {
+                            const lRef = ref.toLowerCase();
+                            if (!lRef || lRef === '' || lRef === 'direct') {
+                               sources['Direct'] += count;
+                            } else if (lRef.includes('google') || lRef.includes('bing') || lRef.includes('yahoo')) {
+                               sources['Organic Search'] += count;
+                            } else if (lRef.includes('facebook') || lRef.includes('t.co') || lRef.includes('twitter') || lRef.includes('linkedin') || lRef.includes('instagram')) {
+                               sources['Social'] += count;
+                            } else {
+                               sources['Referral'] += count;
+                            }
+                            totalReferrerAttributed += count;
+                          });
+                          sources['Direct'] += data.visits - totalReferrerAttributed;
+
+                          const pieData = Object.entries(sources).map(([name, value]) => ({ name, value })).filter(d => d.value > 0);
+                          const COLORS = ['#ea580c', '#3b82f6', '#8b5cf6', '#10b981']; 
+                          
+                          return (
+                            <div key={domain} className="bg-orange-950 border border-orange-800 p-4 rounded-lg shadow-lg flex flex-col justify-between">
+                              <h3 className="font-bold text-white text-sm mb-2 uppercase tracking-widest border-b border-orange-800 pb-1 truncate" title={domain}>{domain}</h3>
+                              <div className="h-48 w-full mt-2">
+                                {pieData.length > 0 ? (
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={2} dataKey="value" stroke="none">
+                                        {pieData.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                      </Pie>
+                                      <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #7c2d12', borderRadius: '4px', textTransform: 'uppercase', fontFamily: 'monospace' }} itemStyle={{ color: '#f97316' }} />
+                                      <Legend wrapperStyle={{ fontSize: '11px', textTransform: 'uppercase' }} />
+                                    </PieChart>
+                                  </ResponsiveContainer>
+                                ) : (
+                                  <div className="flex items-center justify-center h-full text-orange-600/50 text-xs font-mono uppercase tracking-widest">No Traffic Data</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                       })}
+                     </div>
+                   );
+                 })()}
+               </div>
+
+               <div>
+                 <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
+                     <Globe className="w-5 h-5"/>
+                     Global Traffic Heatmap
+                   </h2>
+                 </div>
+                 {(() => {
+                   const trafficByCountry: Record<string, number> = {};
+                   visits.forEach(v => {
+                     if (!v.country) return;
+                     let code = v.country.toUpperCase();
+                     if (code === 'UK') code = 'GB';
+                     trafficByCountry[code] = (trafficByCountry[code] || 0) + 1;
+                   });
+                   
+                   const maxVisits = Math.max(1, ...Object.values(trafficByCountry));
+                   const colorScale = scaleLinear<string>().domain([0, maxVisits]).range(["#ffedd5", "#ea580c"]);
+
+                   const nameToIso: Record<string, string> = {
+                     'United States of America': 'US',
+                     'United Kingdom': 'GB',
+                     'Japan': 'JP',
+                     'Canada': 'CA',
+                     'Germany': 'DE',
+                     'France': 'FR',
+                     'India': 'IN',
+                     'Australia': 'AU',
+                     'Brazil': 'BR',
+                     'China': 'CN',
+                     'Russia': 'RU'
+                   };
+
+                   return (
+                     <div className="bg-orange-950/40 border border-orange-900 p-4 rounded shadow-lg mb-8">
+                       <div className="h-[400px] w-full flex items-center justify-center">
+                         <ComposableMap 
+                           projection="geoMercator" 
+                           projectionConfig={{ scale: 120 }}
+                           style={{ width: "100%", height: "100%" }}
+                         >
+                           <Sphere stroke="#7c2d12" strokeWidth={0.5} id="sphere" fill="transparent" />
+                           <Graticule stroke="#7c2d12" strokeWidth={0.2} strokeOpacity={0.5} />
+                           <Geographies geography="https://unpkg.com/world-atlas@2.0.2/countries-110m.json">
+                             {({ geographies }) =>
+                               geographies.map((geo) => {
+                                 const countryName = geo.properties.name;
+                                 const isoCode = nameToIso[countryName] || geo.id; 
+                                 const value = trafficByCountry[isoCode as string] || trafficByCountry[countryName] || 0;
+                                 return (
+                                   <Geography
+                                     key={geo.rsmKey}
+                                     geography={geo}
+                                     fill={value ? colorScale(value) : "#1a0800"}
+                                     stroke="#ea580c"
+                                     strokeWidth={0.2}
+                                     data-tooltip-id="global-traffic-tooltip"
+                                     data-tooltip-content={`${countryName}: ${value} visits`}
+                                     style={{
+                                       default: { outline: "none", transition: "all 250ms" },
+                                       hover: { fill: "#f97316", outline: "none", cursor: "pointer", strokeWidth: 0.5 },
+                                       pressed: { fill: "#c2410c", outline: "none" },
+                                     }}
+                                   />
+                                 );
+                               })
+                             }
+                           </Geographies>
+                         </ComposableMap>
+                         <ReactTooltip 
+                           id="global-traffic-tooltip" 
+                           style={{ backgroundColor: '#ea580c', color: '#000', fontWeight: 'bold' }} 
+                         />
+                       </div>
+                     </div>
+                   );
+                 })()}
                </div>
 
                <div>
@@ -867,7 +1393,90 @@ function AdminDashboard() {
                    </div>
                  </div>
                </div>
-              
+               
+              {(() => {
+                const buckets: Record<string, number> = {};
+                const now = Date.now();
+                for (let i = 24; i >= 0; i--) {
+                  const d = new Date(now - i * 3600 * 1000);
+                  buckets[d.toISOString().slice(0, 13)] = 0;
+                }
+                visits.forEach(v => {
+                  const k = new Date(v.created_at).toISOString().slice(0, 13);
+                  if (buckets[k] !== undefined) buckets[k]++;
+                });
+                const sortedKeys = Object.keys(buckets).sort();
+                const sparklineData = sortedKeys.slice(1).map((k, index) => ({
+                  time: new Date(k + ':00:00Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  visits: buckets[k],
+                  prev_visits: buckets[sortedKeys[index]]
+                }));
+                const hasTrafficSpike = Object.values(buckets).some(v => v > trafficThreshold);
+
+                return (
+                  <div className="space-y-6">
+                    <div className="bg-orange-950/30 border border-orange-900 rounded-lg p-4 flex items-center justify-between">
+                       <label className="text-orange-400 font-bold uppercase tracking-widest text-xs flex items-center gap-2">
+                         <Activity className="w-4 h-4"/> Alert Threshold ({trafficThreshold} visits/hr)
+                       </label>
+                       <input 
+                         type="range" 
+                         min="10" 
+                         max="2000" 
+                         step="10" 
+                         value={trafficThreshold} 
+                         onChange={e => setTrafficThreshold(Number(e.target.value))} 
+                         className="w-48 accent-orange-500"
+                       />
+                    </div>
+                    {hasTrafficSpike && (
+                      <div className="bg-red-950/80 border border-red-500 p-4 rounded-lg flex items-start gap-4 shadow-[0_0_15px_rgba(239,68,68,0.3)] duration-1000">
+                        <ShieldAlert className="w-6 h-6 text-red-500 mt-0.5 shrink-0 animate-pulse" />
+                        <div>
+                          <h3 className="text-red-400 font-bold uppercase tracking-widest text-sm mb-1">High Traffic Alert Threshold Exceeded</h3>
+                          <p className="text-red-200 text-sm">Traffic volume has exceeded {trafficThreshold} visits/hour in recent intervals. Unusually high request density detected.</p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="bg-orange-950/50 border border-orange-900 overflow-hidden rounded-lg p-4">
+                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-4 flex items-center justify-between">
+                        <span>24H Traffic Volume (Visits)</span>
+                        <div className="flex items-center gap-4">
+                          <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span> Current</span>
+                          <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-800"></span> Previous Hour</span>
+                          <span className="text-orange-600 ml-2">SPARKLINE_SYS</span>
+                        </div>
+                      </div>
+                      <div className="h-40 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={sparklineData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="colorVisits" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f97316" stopOpacity={0.5}/>
+                              <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorPrevVisits" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#9a3412" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#9a3412" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#4a1a08" vertical={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#000', border: '1px solid #7c2d12', borderRadius: '4px', textTransform: 'uppercase', fontFamily: 'monospace' }}
+                            itemStyle={{ color: '#f97316' }}
+                            labelStyle={{ color: '#fdba74', marginBottom: '8px' }}
+                            cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '4 4' }}
+                          />
+                          <Area type="monotone" name="Previous Hour" dataKey="prev_visits" stroke="#9a3412" strokeWidth={2} strokeDasharray="4 4" fillOpacity={1} fill="url(#colorPrevVisits)" />
+                          <Area type="monotone" name="Current" dataKey="visits" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#colorVisits)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg relative overflow-hidden group">
                   <div className="absolute inset-0 bg-gradient-to-t from-orange-600/20 to-transparent group-hover:opacity-100 opacity-0 transition-opacity"></div>
@@ -908,6 +1517,17 @@ function AdminDashboard() {
                 </div>
               </div>
 
+              <div className="flex items-center gap-2 mb-4 bg-orange-950/50 border border-orange-900 p-2 rounded-lg">
+                <Search className="w-5 h-5 text-orange-500 ml-2" />
+                <input
+                  type="text"
+                  placeholder="Filter traffic log by IP, country, or referrer..."
+                  className="w-full bg-transparent border-none outline-none text-white placeholder-orange-700/70 font-mono text-sm px-2"
+                  value={trafficSearch}
+                  onChange={(e) => setTrafficSearch(e.target.value)}
+                />
+              </div>
+
               <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900 shadow-xl">
                 <table className="min-w-full divide-y divide-orange-900">
                   <thead className="bg-orange-950">
@@ -920,20 +1540,100 @@ function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-orange-900 text-sm">
-                    {visits.map(v => (
-                      <tr key={v.id} className="hover:bg-orange-950/30">
-                        <td className="px-6 py-4 whitespace-nowrap text-orange-500 font-mono text-xs">{new Date(v.created_at).toLocaleString()}</td>
-                        <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{v.domain_name}</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-red-400 font-mono text-xs">{v.ip_address}</div>
-                          <div className="text-orange-600 text-xs font-bold uppercase">{v.country}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-orange-300 max-w-xs truncate" title={v.user_agent}>{v.user_agent}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-orange-400 max-w-xs truncate">{v.referrer}</td>
+                    {(() => {
+                      const filteredVisits = visits.filter(v => {
+                        if (!trafficSearch) return true;
+                        const term = trafficSearch.toLowerCase();
+                        return (v.ip_address || '').toLowerCase().includes(term) ||
+                               (v.country || '').toLowerCase().includes(term) ||
+                               (v.referrer || '').toLowerCase().includes(term);
+                      });
+
+                      return (
+                        <>
+                          {filteredVisits.map(v => {
+                            const ua = (v.user_agent || '').toLowerCase();
+                            const ref = (v.referrer || '').toLowerCase();
+                            const botKeywords = ['bot', 'crawler', 'spider', 'wget', 'curl', 'postman', 'python', 'go-http-client'];
+                            const suspiciousRefs = ['auto', 'seo', 'spam', 'tracker', 'scam'];
+                            const isSuspicious = botKeywords.some(kw => ua.includes(kw)) || suspiciousRefs.some(kw => ref.includes(kw));
+
+                            return (
+                              <tr key={v.id} className={cn("transition-colors", isSuspicious ? "bg-red-950/20 hover:bg-red-950/40 border-l-2 border-red-500" : "hover:bg-orange-950/30")}>
+                                <td className="px-6 py-4 whitespace-nowrap text-orange-500 font-mono text-xs">
+                                  {isSuspicious && <ShieldAlert className="inline w-3 h-3 text-red-500 mr-2" />}
+                                  {new Date(v.created_at).toLocaleString()}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{v.domain_name}</td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className={cn("font-mono text-xs", isSuspicious ? "text-red-300" : "text-red-400")}>{v.ip_address}</div>
+                                  <div className={cn("text-xs font-bold uppercase", isSuspicious ? "text-red-500" : "text-orange-600")}>{v.country}</div>
+                                </td>
+                                <td className={cn("px-6 py-4 whitespace-nowrap max-w-xs truncate", isSuspicious ? "text-red-200" : "text-orange-300")} title={v.user_agent}>{v.user_agent}</td>
+                                <td className={cn("px-6 py-4 whitespace-nowrap max-w-xs truncate", isSuspicious ? "text-red-300" : "text-orange-400")}>{v.referrer}</td>
+                              </tr>
+                            );
+                          })}
+                          {filteredVisits.length === 0 && (
+                            <tr><td colSpan={5} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">No traffic intercepted</td></tr>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ALERTS TAB */}
+          {activeTab === 'alerts' && (
+            <div className="animate-in fade-in duration-300 space-y-6">
+              <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
+                <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5"/>
+                  System Alerts Log
+                </h2>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs font-mono text-orange-400">Total Alerts: {alertsLog.length}</span>
+                  <button onClick={() => setAlertsLog([])} className="text-xs font-bold uppercase tracking-widest bg-orange-950/50 hover:bg-orange-900 border border-orange-800 text-orange-400 py-1.5 px-3 rounded transition-colors flex items-center gap-2">
+                    <Trash2 className="w-4 h-4" /> Clear Log
+                  </button>
+                </div>
+              </div>
+
+              <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900 shadow-xl">
+                <table className="min-w-full divide-y divide-orange-900">
+                  <thead className="bg-orange-950">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Timestamp</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Severity</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Alert Type</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-orange-900 text-sm">
+                    {alertsLog.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">No alerts recorded</td>
                       </tr>
-                    ))}
-                    {visits.length === 0 && (
-                      <tr><td colSpan={5} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">No traffic intercepted</td></tr>
+                    ) : (
+                      alertsLog.map((alert: any) => (
+                        <tr key={alert.id} className="hover:bg-orange-950/30 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap text-orange-500 font-mono text-xs">
+                            {new Date(alert.timestamp).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {alert.severity === 'high' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-red-950 border border-red-800 text-red-500">HIGH</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-yellow-950 border border-yellow-800 text-yellow-500">MEDIUM</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap font-bold text-white uppercase text-xs tracking-widest">{alert.type}</td>
+                          <td className="px-6 py-4 text-orange-300 text-sm max-w-lg truncate" title={alert.message}>{alert.message}</td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
@@ -1187,6 +1887,32 @@ function AdminDashboard() {
                        </select>
                      </div>
                      <div>
+                       <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Personality</label>
+                       <select value={newAgentForm.personality} onChange={(e) => {
+                          const personality = e.target.value;
+                          setNewAgentForm(prev => {
+                             let instruction = prev.instruction;
+                             
+                             // Strip out previous personality modifiers if they exist at the end
+                             instruction = instruction.replace(/\n\n(Maintain a strictly formal and professional tone in all communications\.|Focus on technical accuracy, providing detailed system-level explanations, code snippets, and structured data outputs\.|Be extremely concise\. Provide minimal fluff and get straight to the point in as few words as possible\.)/g, '');
+                             
+                             if (personality === 'Formal') {
+                                instruction += '\n\nMaintain a strictly formal and professional tone in all communications.';
+                             } else if (personality === 'Technical') {
+                                instruction += '\n\nFocus on technical accuracy, providing detailed system-level explanations, code snippets, and structured data outputs.';
+                             } else if (personality === 'Concise') {
+                                instruction += '\n\nBe extremely concise. Provide minimal fluff and get straight to the point in as few words as possible.';
+                             }
+                             return { ...prev, personality, instruction: instruction.trim() };
+                          });
+                       }} className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white">
+                          <option value="Default">Default</option>
+                          <option value="Formal">Formal</option>
+                          <option value="Technical">Technical</option>
+                          <option value="Concise">Concise</option>
+                       </select>
+                     </div>
+                     <div>
                        <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">API Key (Leave blank to use base key)</label>
                        <input value={newAgentForm.apiKey} onChange={e => setNewAgentForm({...newAgentForm, apiKey: e.target.value})} type="password" placeholder="AI Studio Secret Key..." className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white font-mono text-xs" />
                      </div>
@@ -1206,7 +1932,7 @@ function AdminDashboard() {
                          body: JSON.stringify({ id: 'ag' + Date.now(), name, model, system_instruction: instruction, role, api_key: apiKey })
                        });
                        setEditingAgentId(null);
-                       setNewAgentForm({ name: '', model: 'gpt-4o', instruction: '', role: 'operator', apiKey: '' }); // reset form
+                       setNewAgentForm({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '', personality: 'Default' }); // reset form
                        fetchAll();
                      }} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded uppercase text-sm font-bold flex items-center gap-2 shadow-lg shadow-red-900 transition-colors">
                         <Save className="w-4 h-4"/> Initialize Agent
