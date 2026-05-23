@@ -1,1 +1,82 @@
 @import "tailwindcss";
+
+@theme {
+  --color-black: var(--theme-black);
+  --color-white: var(--theme-white);
+  --color-orange-200: var(--theme-orange-200);
+  --color-orange-300: var(--theme-orange-300);
+  --color-orange-400: var(--theme-orange-400);
+  --color-orange-500: var(--theme-orange-500);
+  --color-orange-600: var(--theme-orange-600);
+  --color-orange-700: var(--theme-orange-700);
+  --color-orange-800: var(--theme-orange-800);
+  --color-orange-900: var(--theme-orange-900);
+  --color-orange-950: var(--theme-orange-950);
+  --color-red-500: var(--theme-red-500);
+  --color-red-600: var(--theme-red-600);
+  --color-red-900: var(--theme-red-900);
+  --color-red-950: var(--theme-red-950);
+}
+
+:root {
+  /* Default: Dark Terminal */
+  --theme-black: #000000;
+  --theme-white: #ffffff;
+  
+  --theme-orange-200: #fed7aa;
+  --theme-orange-300: #fdba74;
+  --theme-orange-400: #fb923c;
+  --theme-orange-500: #f97316;
+  --theme-orange-600: #ea580c;
+  --theme-orange-700: #c2410c;
+  --theme-orange-800: #9a3412;
+  --theme-orange-900: #7c2d12;
+  --theme-orange-950: rgba(249, 115, 22, 0.08); /* Transparent orange highlights */
+
+  --theme-red-500: #ef4444;
+  --theme-red-600: #dc2626;
+  --theme-red-900: #7f1d1d;
+  --theme-red-950: rgba(239, 68, 68, 0.1);
+}
+
+:root.theme-light {
+  /* High Contrast Light */
+  --theme-black: #ffffff;
+  --theme-white: #0a0a0a;
+
+  --theme-orange-200: #9a3412;
+  --theme-orange-300: #c2410c;
+  --theme-orange-400: #ea580c;
+  --theme-orange-500: #ea580c;
+  --theme-orange-600: #ea580c;
+  --theme-orange-700: #f97316;
+  --theme-orange-800: #fdba74;
+  --theme-orange-900: #fed7aa;
+  --theme-orange-950: rgba(234, 88, 12, 0.1); 
+
+  --theme-red-500: #dc2626;
+  --theme-red-600: #dc2626;
+  --theme-red-900: #fca5a5;
+  --theme-red-950: rgba(220, 38, 38, 0.1);
+}
+
+:root.theme-solarized {
+  /* Solarized */
+  --theme-black: #002b36;
+  --theme-white: #839496;
+
+  --theme-orange-200: #93a1a1; /* text colors */
+  --theme-orange-300: #839496;
+  --theme-orange-400: #cb4b16; /* primary orange */
+  --theme-orange-500: #cb4b16; 
+  --theme-orange-600: #dc322f; /* secondary red/orange */
+  --theme-orange-700: #dc322f;
+  --theme-orange-800: #073642; /* borders */
+  --theme-orange-900: rgba(203, 75, 22, 0.3); /* dark borders */
+  --theme-orange-950: rgba(203, 75, 22, 0.15); /* panels */
+
+  --theme-red-500: #dc322f;
+  --theme-red-600: #dc322f;
+  --theme-red-900: rgba(220, 50, 47, 0.3);
+  --theme-red-950: rgba(220, 50, 47, 0.15);
+}
