@@ -458,6 +458,37 @@ function TrafficVolumeAlerts({ alerts }: { alerts: any[] }) {
   );
 }
 
+const visitesToChart = (visits: any[]) => {
+  const buckets: Record<string, number> = {};
+  const now = Date.now();
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now - i * (7200 * 1000));
+    buckets[d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })] = 0;
+  }
+  
+  const sortedKeys = Object.keys(buckets);
+  visits.forEach(v => {
+    const vTime = new Date(v.created_at).getTime();
+    let bestKey = sortedKeys[0];
+    let minDiff = Infinity;
+    sortedKeys.forEach((key, idx) => {
+      const d = new Date(now - (11 - idx) * (7200 * 1000)).getTime();
+      const diff = Math.abs(d - vTime);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestKey = key;
+      }
+    });
+    buckets[bestKey] += 1;
+  });
+  
+  return sortedKeys.map(time => ({
+    time,
+    load: buckets[time],
+    agents: Math.floor(buckets[time] * 0.3)
+  }));
+};
+
 function AdminDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('nexus_auth') === 'true');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -603,6 +634,11 @@ function AdminDashboard() {
   const [newKeyParams, setNewKeyParams] = useState({ numbers: true, symbols: false });
   const [newKeyWizardStep, setNewKeyWizardStep] = useState<1 | 2>(1);
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+  
+  // Test Key State
+  const [testKeyInput, setTestKeyInput] = useState('');
+  const [testKeyResult, setTestKeyResult] = useState<{status: 'idle' | 'loading' | 'success' | 'error', message: string, data?: any}>({ status: 'idle', message: '' });
+
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
 
   const fetchApiKeys = async () => {
@@ -967,14 +1003,31 @@ function AdminDashboard() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
-    if (activeTab === 'logs') {
+    if (isLoggedIn) {
       const sse = new EventSource('/api/logs/stream');
       sse.onmessage = (e) => {
         const log = JSON.parse(e.data);
         setLogs(prev => [...prev, log].slice(-100)); // Keep last 100
+        
+        if (log.type === 'visit_created') {
+           setVisits(prev => [log.data, ...prev].slice(0, 500));
+        } else if (log.type === 'api_key_used') {
+           setApiKeyUsage(prev => {
+              const date = log.data.usage_date;
+              const existing = prev.find(p => p.name === log.data.name && p.usage_date === date);
+              if (existing) {
+                 return prev.map(p => p === existing ? { ...p, calls: p.calls + 1 } : p);
+              } else {
+                 return [...prev, log.data];
+              }
+           });
+        }
       };
       return () => sse.close();
     }
+  }, [isLoggedIn]);
+
+  useEffect(() => {
     if (activeTab === 'apikeys') {
       fetchApiKeys();
       const handleRefresh = () => fetchApiKeys();
@@ -1002,6 +1055,8 @@ function AdminDashboard() {
     { id: 'apikeys', icon: Key, label: 'API Access' },
     { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true }
   ];
+
+  console.log("NAV_ITEMS_DEBUG:", navItems);
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-black text-white font-sans selection:bg-orange-500 selection:text-white pb-16 md:pb-0">
@@ -1197,15 +1252,7 @@ function AdminDashboard() {
                  </div>
                  <div className="h-[300px] w-full">
                    <ResponsiveContainer width="100%" height="100%">
-                     <AreaChart data={[
-                        { time: '00:00', load: 120, agents: 40 },
-                        { time: '04:00', load: 300, agents: 80 },
-                        { time: '08:00', load: 1800, agents: 300 },
-                        { time: '12:00', load: 2200, agents: 450 },
-                        { time: '16:00', load: 1950, agents: 320 },
-                        { time: '20:00', load: 800, agents: 150 },
-                        { time: '23:59', load: 400, agents: 70 },
-                     ]}>
+                     <AreaChart data={visitesToChart(visits)}>
                        <defs>
                          <linearGradient id="colorLoad" x1="0" y1="0" x2="0" y2="1">
                            <stop offset="5%" stopColor="#ea580c" stopOpacity={0.8}/>
@@ -1897,14 +1944,16 @@ function AdminDashboard() {
                 <h3 className="text-sm font-bold text-orange-400 uppercase tracking-widest mb-4">Request Origin Density</h3>
                 <div className="h-[200px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={[
-                      { region: 'NA East', requests: 4000 },
-                      { region: 'NA West', requests: 3000 },
-                      { region: 'EU Central', requests: 2000 },
-                      { region: 'AP South', requests: 2780 },
-                      { region: 'SA East', requests: 1890 },
-                      { region: 'Unknown', requests: 2390 },
-                    ]}>
+                    <BarChart data={(() => {
+                      const origins: Record<string, number> = {};
+                      visits.forEach(v => {
+                        const code = v.country ? v.country.toUpperCase() : 'UNKNOWN';
+                        origins[code] = (origins[code] || 0) + 1;
+                      });
+                      const data = Object.entries(origins).map(([region, requests]) => ({ region, requests })).sort((a,b) => b.requests - a.requests).slice(0, 7);
+                      if (data.length === 0) return [{ region: 'No Data', requests: 0 }];
+                      return data;
+                    })()}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#9a3412" vertical={false} />
                       <XAxis dataKey="region" stroke="#fdba74" tick={{ fill: '#fdba74', fontSize: 12 }} />
                       <YAxis stroke="#fdba74" tick={{ fill: '#fdba74', fontSize: 12 }} />
@@ -2741,6 +2790,58 @@ function AdminDashboard() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="bg-orange-950/20 border border-orange-900 rounded-lg p-6">
+                 <h3 className="text-orange-500 font-bold uppercase tracking-widest text-sm mb-4 flex items-center gap-2">
+                   Test Validation Endpoint (Edge Function)
+                 </h3>
+                 <div className="flex flex-col gap-4 max-w-2xl">
+                   <p className="text-orange-800 text-xs">Simulate an app-to-app validation request against your backend's Edge Function gateway via POST /api/api-keys/validate.</p>
+                   <div className="flex flex-col md:flex-row gap-3">
+                     <input 
+                       type="text" 
+                       placeholder="Enter Bearer Token (cnx_...)"
+                       value={testKeyInput}
+                       onChange={(e) => setTestKeyInput(e.target.value)}
+                       className="flex-1 bg-black border border-orange-900 text-orange-200 px-4 py-3 rounded focus:outline-none focus:border-orange-500 min-w-0"
+                     />
+                     <button
+                       onClick={async () => {
+                         if (!testKeyInput.trim()) return;
+                         setTestKeyResult({ status: 'loading', message: 'Validating against Edge Function...' });
+                         try {
+                           const res = await fetch('/api/api-keys/validate', {
+                             method: 'POST',
+                             headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify({ api_key: testKeyInput.trim() })
+                           });
+                           const data = await res.json();
+                           if (res.ok && data.valid) {
+                             setTestKeyResult({ status: 'success', message: 'Validation Successful (200 OK)', data });
+                           } else {
+                             setTestKeyResult({ status: 'error', message: `Validation Failed (${res.status} Unauthorized)`, data });
+                           }
+                         } catch (e: any) {
+                           setTestKeyResult({ status: 'error', message: 'Failed to contact validation endpoint: ' + e.message });
+                         }
+                       }}
+                       disabled={!testKeyInput.trim() || testKeyResult.status === 'loading'}
+                       className="px-6 py-3 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:hover:bg-orange-600 text-white rounded font-bold uppercase text-xs tracking-wider transition-colors shrink-0"
+                     >
+                       {testKeyResult.status === 'loading' ? 'Validating...' : 'Validate Key'}
+                     </button>
+                   </div>
+                   
+                   {testKeyResult.status !== 'idle' && (
+                     <div className={cn("p-4 rounded border font-mono text-xs overflow-x-auto", testKeyResult.status === 'success' ? "bg-green-950/30 border-green-900 text-green-400" : (testKeyResult.status === 'error' ? "bg-red-950/30 border-red-900 text-red-400" : "bg-orange-950/30 border-orange-900 text-orange-400"))}>
+                        <div className="font-bold mb-2 uppercase">{testKeyResult.message}</div>
+                        {testKeyResult.data && (
+                          <pre className="whitespace-pre-wrap">{JSON.stringify(testKeyResult.data, null, 2)}</pre>
+                        )}
+                     </div>
+                   )}
+                 </div>
               </div>
 
               {apiKeyUsage && apiKeyUsage.length > 0 && (

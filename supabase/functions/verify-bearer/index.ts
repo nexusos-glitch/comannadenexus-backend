@@ -1,73 +1,68 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.49.8";
 
-Deno.serve(async (req) => {
-  // Handle CORS
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { 
-      headers: { 
-        'Access-Control-Allow-Origin': '*', 
-        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' 
-      } 
-    })
-  }
+function getBearerToken(req: Request): string | null {
+  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!auth) return null;
+  const [scheme, token] = auth.split(" ");
+  if (!scheme || !token || scheme.toLowerCase() !== "bearer") return null;
+  return token.trim();
+}
 
+Deno.serve(async (req: Request) => {
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: "Missing or invalid Authorization header" }), { 
-        status: 401,
-        headers: { "Content-Type": "application/json" }
-      });
+    if (req.method !== "POST") {
+      return new Response(
+        JSON.stringify({ error: "Method not allowed" }),
+        { status: 405, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    // Extract the raw token
-    const token = authHeader.split('Bearer ')[1];
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!supabaseUrl || !supabaseKey) {
-      return new Response(JSON.stringify({ error: "Server misconfiguration (Missing Supabase Credentials)" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      });
+    const token = getBearerToken(req);
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: "Missing Bearer token" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    // Initialize Supabase admin client to call the RPC securely bypassing RLS 
-    // (since the verify_api_key RPC uses security definer)
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
 
-    // Call the RPC function we added to the schema.
-    // The RPC will securely hash the key, verify it, increment use_count, and update last_used.
-    const { data, error } = await supabase.rpc('verify_api_key', { p_key: token });
+    // Calls your DB verifier (hash comparison, last_used/use_count updates)
+    const { data, error } = await supabase.rpc("verify_api_key", { p_key: token });
 
-    if (error || !data || data.length === 0) {
-      return new Response(JSON.stringify({ valid: false, error: "Invalid or revoked API key" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" }
-      });
+    if (error) {
+      return new Response(
+        JSON.stringify({ error: "Verification failed", details: error.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    const keyRecord = data[0];
+    // verify_api_key returns rows; valid key => at least one row
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row?.api_key_id) {
+      return new Response(
+        JSON.stringify({ valid: false }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
-    // If valid, return success. The downstream app can use these details.
-    return new Response(JSON.stringify({
-      valid: true,
-      key_details: {
-        id: keyRecord.api_key_id,
-        name: keyRecord.key_name,
-        domain_id: keyRecord.domain_id
-      }
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-
+    return new Response(
+      JSON.stringify({
+        valid: true,
+        api_key_id: row.api_key_id,
+        domain_id: row.domain_id,
+        key_name: row.key_name
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { 
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return new Response(
+      JSON.stringify({ error: "Unexpected error", details: String(e) }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 });

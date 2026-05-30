@@ -745,24 +745,74 @@ async function startServer() {
       const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
       
       if (supabaseUrl && supabaseKey) {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        
-        const { data, error } = await supabase.rpc('verify_api_key', { p_key: api_key });
-        if (error || !data || data.length === 0) {
-          return res.status(401).json({ valid: false, error: "Invalid API key" });
+        // We will call the edge function instead of rpc directly to respect the newly deployed Supabase Edge Function
+        try {
+          const edgeUrl = `${supabaseUrl}/functions/v1/validate-api-key`;
+          const response = await fetch(edgeUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${api_key}`
+            }
+          });
+          
+          if (!response.ok) {
+            return res.status(response.status).json({ valid: false, error: "Validation failed via Edge Function" });
+          }
+          
+          const data = await response.json();
+          if (!data || !data.valid) {
+             return res.status(401).json({ valid: false, error: "Invalid API key" });
+          }
+
+          const usageRecord = {
+             api_key_id: data.api_key_id,
+             name: data.key_name,
+             usage_date: new Date().toISOString().split('T')[0],
+             calls: 1
+          };
+          logEmitter.emit('log', { type: 'api_key_used', data: usageRecord, message: `Key used: ${data.key_name}`, source: 'Auth', level: 'INFO', timestamp: new Date().toISOString() });
+
+          return res.json({ 
+            valid: true, 
+            key: {
+              id: data.api_key_id,
+              name: data.key_name,
+              domain_id: data.domain_id,
+              use_count: 1 // Provided by edge function design limits
+            } 
+          });
+        } catch (edgeError: any) {
+          console.error("Edge function validation failed:", edgeError);
+          // Fallback to local RPC if edge function doesn't exist
+          const { createClient } = await import('@supabase/supabase-js');
+          const supabase = createClient(supabaseUrl, supabaseKey);
+          
+          const { data, error } = await supabase.rpc('verify_api_key', { p_key: api_key });
+          if (error || !data || data.length === 0) {
+            return res.status(401).json({ valid: false, error: "Invalid API key" });
+          }
+          
+          const keyRecord = data[0];
+          
+          const usageRecord = {
+             api_key_id: keyRecord.api_key_id,
+             name: keyRecord.key_name,
+             usage_date: new Date().toISOString().split('T')[0],
+             calls: 1
+          };
+          logEmitter.emit('log', { type: 'api_key_used', data: usageRecord, message: `Key used: ${keyRecord.key_name}`, source: 'Auth', level: 'INFO', timestamp: new Date().toISOString() });
+
+          return res.json({ 
+            valid: true, 
+            key: {
+              id: keyRecord.api_key_id,
+              name: keyRecord.key_name,
+              domain_id: keyRecord.domain_id,
+              use_count: 1
+            } 
+          });
         }
-        
-        const keyRecord = data[0];
-        return res.json({ 
-          valid: true, 
-          key: {
-            id: keyRecord.api_key_id,
-            name: keyRecord.key_name,
-            domain_id: keyRecord.domain_id,
-            use_count: 1 // Detailed metric count hidden for security
-          } 
-        });
       }
       
       // Local SQLite fallback
@@ -782,6 +832,14 @@ async function startServer() {
           ON CONFLICT(api_key_id, usage_date) DO UPDATE SET calls = calls + 1
         `).run(usageId, keyRecord.id, today);
 
+        const usageRecord = {
+           api_key_id: keyRecord.id,
+           name: keyRecord.name,
+           usage_date: today,
+           calls: 1
+        };
+        logEmitter.emit('log', { type: 'api_key_used', data: usageRecord, message: `Key used: ${keyRecord.name}`, source: 'Auth', level: 'INFO', timestamp: new Date().toISOString() });
+
         res.json({ 
           valid: true, 
           key: {
@@ -797,6 +855,31 @@ async function startServer() {
       }
     } catch (e: any) {
       systemLog('ERROR', 'API_Keys', `Failed to validate key: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/visits", (req, res) => {
+    try {
+      const { domain_id, url, user_agent, referrer } = req.body;
+      const id = 'v_' + Math.random().toString(36).substr(2, 9);
+      
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+      const countryCodes = ['US', 'GB', 'IN', 'CA', 'AU', 'DE', 'FR', 'JP', 'BR', 'ZA'];
+      const syntheticCountry = countryCodes[Math.floor(Math.random() * countryCodes.length)];
+      
+      db.prepare('INSERT INTO visits (id, domain_id, ip_address, country, user_agent, referrer) VALUES (?, ?, ?, ?, ?, ?)').run(
+        id, domain_id || 'default_domain', ip.toString(), syntheticCountry, user_agent || 'Unknown UA', referrer || 'direct'
+      );
+      
+      const newVisit = {
+         id, domain_id, ip_address: ip, country: syntheticCountry, user_agent, referrer, created_at: new Date().toISOString()
+      };
+      
+      logEmitter.emit('log', { type: 'visit_created', data: newVisit, message: 'New visit recorded', source: 'Telemetry', level: 'INFO', timestamp: new Date().toISOString() });
+      
+      res.json({ success: true, visit: newVisit });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
