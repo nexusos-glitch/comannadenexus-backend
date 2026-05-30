@@ -1,20 +1,40 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# CommandNexus Operating System 
 
-# Run and deploy your AI Studio app
+This application is a **full-stack Node.js server**, not just a static frontend. It includes an embedded SQLite database (`data.db`) and a custom Express backend (`server.ts`).
 
-This contains everything you need to run your app locally.
+## Why does it look "broken" or different when downloaded?
 
-View your app in AI Studio: https://ai.studio/apps/5d63e92a-4cfd-460d-be8b-39ad33f314e0
+If you download this code or export it to GitHub and deploy it directly to a static hosting provider (like Vercel, Netlify, or GitHub Pages), **those platforms will only build the React frontend and completely ignore the `server.ts` backend.** 
 
-## Run Locally
+Because the frontend relies entirely on `/api/` endpoints to fetch the database state, configuration, members, and AI logic, the app will appear broken, empty, or "fake" on those platforms. 
 
-**Prerequisites:**  Node.js
+## How to Run It For Real
 
+### 1. Local Development
+To run the exact system you see in the AI Studio preview on your own local computer:
+```bash
+npm install
+npm run dev
+```
+The system will start both the backend server and frontend preview on `http://localhost:3000`.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 2. Live Production Hosting
+To host this live, you must deploy it to a platform that supports **Node.js applications**, not static web apps.
+Recommended providers:
+* **Railway** (Connect GitHub repo, it will auto-detect Node.js)
+* **Render** (Choose "Web Service" > connect repo)
+* **DigitalOcean App Platform** or **VPS (Ubuntu)**
+
+Your build and start commands for production hosting are:
+* **Build Command**: `npm run build`
+* **Start Command**: `npm run start` (or `node dist/server.cjs`)
+
+### 3. Database Migration (Optional)
+The system uses an embedded SQLite database (`data.db`). If you deploy to a containerized platform, your local database resets on every deployment unless you use a persistent volume. 
+
+The server is heavily engineered to automatically switch to **Supabase** (PostgreSQL) if you provide credentials. Add these to your environment variables on your hosting provider:
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+If these are present, the backend automatically uses Supabase for all database requests, giving you a persistent, scalable database.

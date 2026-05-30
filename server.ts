@@ -133,6 +133,16 @@ function initSchema() {
       UNIQUE(api_key_id, usage_date),
       FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS api_logs (
+      id TEXT PRIMARY KEY,
+      endpoint TEXT NOT NULL,
+      method TEXT NOT NULL,
+      status_code INTEGER,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ip_address TEXT,
+      duration_ms INTEGER
+    );
   `);
 
   try {
@@ -199,6 +209,23 @@ async function startServer() {
   // Logging middleware
   app.use((req, res, next) => {
     systemLog('INFO', 'Router', `${req.method} ${req.url}`);
+    
+    // Track API requests in the database
+    if (req.url.startsWith('/api/') && !req.url.startsWith('/api/logs/stream')) {
+      const start = Date.now();
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+      res.on('finish', () => {
+        const duration = Date.now() - start;
+        const id = 'log_' + Math.random().toString(36).substr(2, 9);
+        try {
+          db.prepare('INSERT INTO api_logs (id, endpoint, method, status_code, timestamp, ip_address, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(id, req.path, req.method, res.statusCode, new Date().toISOString(), ip.toString(), duration);
+        } catch(e) {
+          console.error("Failed to insert api log:", e);
+        }
+      });
+    }
+
     next();
   });
 

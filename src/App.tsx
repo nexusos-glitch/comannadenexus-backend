@@ -792,6 +792,14 @@ function AdminDashboard() {
 
     const report = {
       generatedOn: new Date().toISOString(),
+      keyPerformanceIndicators: {
+        activeDomains: domains.length,
+        registeredComponents: components.length,
+        totalMembers: users.length,
+        activeCampaigns: ads.length,
+        totalAccessTokens: apiKeys.length,
+        totalVisits: visits.length
+      },
       domainStatistics: Object.entries(trafficByDomain).map(([domain, visits]) => ({
         domain,
         visits
@@ -1028,7 +1036,7 @@ function AdminDashboard() {
   }, [isLoggedIn]);
 
   useEffect(() => {
-    if (activeTab === 'apikeys') {
+    if (activeTab === 'apikeys' || activeTab === 'apiactivity') {
       fetchApiKeys();
       const handleRefresh = () => fetchApiKeys();
       window.addEventListener('apikey_generated', handleRefresh);
@@ -1053,6 +1061,7 @@ function AdminDashboard() {
     { id: 'logs', icon: Terminal, label: 'System Events' },
     { id: 'agents_management', icon: Settings, label: 'Agents Matrix' },
     { id: 'apikeys', icon: Key, label: 'API Access' },
+    { id: 'apiactivity', icon: Activity, label: 'API Activity' },
     { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true }
   ];
 
@@ -2895,6 +2904,45 @@ function AdminDashboard() {
                   );
                 })()
               )}
+            </div>
+          )}
+
+          {/* API ACTIVITY TAB */}
+          {activeTab === 'apiactivity' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="flex flex-col justify-between items-start mb-6 gap-4 border-b border-orange-900 pb-4">
+                <h2 className="text-xl font-bold text-white uppercase tracking-widest flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-orange-500" /> API Activity
+                </h2>
+                <p className="text-sm text-orange-400 font-mono">Real-time daily call volume telemetry per API key.</p>
+              </div>
+
+              <div className="overflow-x-auto border border-orange-900 rounded-lg">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-orange-950 border-b border-orange-900 text-orange-500 text-xs uppercase tracking-widest font-bold">
+                      <th className="p-4">Date</th>
+                      <th className="p-4">Key Name</th>
+                      <th className="p-4 border-l border-orange-900 text-right">Calls Made</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono text-sm">
+                    {apiKeyUsage.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="p-8 text-center text-orange-800">NO TELEMETRY DATA AVAILABLE</td>
+                      </tr>
+                    ) : (
+                      [...apiKeyUsage].sort((a,b) => new Date(b.usage_date).getTime() - new Date(a.usage_date).getTime()).map(u => (
+                        <tr key={u.id || `${u.api_key_id}-${u.usage_date}`} className="border-b border-orange-900/50 hover:bg-orange-900/20 transition-colors">
+                          <td className="p-4 text-orange-200">{u.usage_date}</td>
+                          <td className="p-4 text-white font-bold">{u.name || u.key_name || 'Unknown'}</td>
+                          <td className="p-4 border-l border-orange-900 text-right text-orange-300 font-bold">{u.calls.toLocaleString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
