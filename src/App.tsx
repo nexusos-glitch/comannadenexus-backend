@@ -9,7 +9,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github, Key, AlertTriangle, TrendingUp, ChevronRight
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github, Key, AlertTriangle, TrendingUp, ChevronRight, Sun, Moon
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -1115,6 +1115,13 @@ function AdminDashboard() {
             </h1>
           </div>
           <div className="flex items-center gap-4 md:gap-6">
+            <button
+              onClick={() => setTheme(theme === 'high-contrast' ? 'default' : 'high-contrast')}
+              className="text-orange-500 hover:text-white transition-colors"
+              title="Toggle Theme"
+            >
+              {theme === 'high-contrast' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+            </button>
             <div className="flex items-center gap-2 text-xs md:text-sm text-red-500 font-mono animate-pulse font-bold">
               <span className="w-2 h-2 rounded-full bg-red-500"></span> <span className="hidden sm:inline">CONNECTION SECURE</span>
             </div>
