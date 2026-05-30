@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github, Key, AlertTriangle, TrendingUp, ChevronRight
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -380,14 +381,105 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
 // --- ADMIN DASHBOARD ---
 
+function TrendIndicator({ data, activeOnly = false }: { data: any[], activeOnly?: boolean }) {
+  const now = Date.now();
+  const validData = activeOnly ? data.filter(d => d.active) : data;
+  const currentTotal = validData.length;
+  
+  if (currentTotal === 0) return null;
+  
+  const previousTotal = validData.filter(d => (now - new Date(d.created_at).getTime()) > 24 * 3600 * 1000).length;
+  
+  if (previousTotal === 0) {
+    return (
+      <div className="text-xs mt-3 text-green-400 font-bold tracking-widest bg-green-950/30 inline-block px-2 py-0.5 rounded border border-green-900/50">
+        +100.0% (24H)
+      </div>
+    );
+  }
+  
+  const percentage = ((currentTotal - previousTotal) / previousTotal) * 100;
+  
+  if (percentage === 0) {
+    return (
+      <div className="text-xs mt-3 text-orange-400/50 font-bold tracking-widest inline-block px-2 py-0.5">
+        0.0% (24H)
+      </div>
+    );
+  }
+  
+  return (
+    <div className={`text-xs mt-3 font-bold tracking-widest inline-block px-2 py-0.5 rounded border ${percentage > 0 ? 'text-green-400 bg-green-950/30 border-green-900/50' : 'text-red-400 bg-red-950/30 border-red-900/50'}`}>
+      {percentage > 0 ? '+' : ''}{percentage.toFixed(1)}% (24H)
+    </div>
+  );
+}
+
+
+
+function TrafficVolumeAlerts({ alerts }: { alerts: any[] }) {
+  const volumeAlerts = alerts.filter(a => a.type === 'Volume Threshold Exceeded');
+  
+  if (volumeAlerts.length === 0) return null;
+
+  return (
+    <div className="mb-8">
+      <div className="flex border-b-2 border-red-800 pb-1 mb-4 items-center gap-2">
+        <Activity className="w-5 h-5 text-red-500" />
+        <h2 className="text-lg font-bold text-white uppercase tracking-widest text-red-500">
+          Traffic Volume Threshold Triggers
+        </h2>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {volumeAlerts.map(alert => (
+          <div key={alert.id} className="bg-red-950/20 border border-red-900/50 p-4 rounded-lg shadow-lg shadow-red-900/5 hover:border-red-500/50 transition-colors">
+            <div className="flex justify-between items-start mb-2">
+              <div className="text-red-400 font-mono text-sm">{new Date(alert.timestamp).toLocaleString()}</div>
+              <span className="bg-red-900 text-red-100 text-xs font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                Exceeded
+              </span>
+            </div>
+            
+            <div className="space-y-3 mt-4 text-sm">
+              <div className="flex justify-between border-b border-red-900/30 pb-1">
+                <span className="text-red-200/60 uppercase tracking-widest text-xs font-bold">Limit</span>
+                <span className="font-mono text-red-200">{alert.threshold || alert.id.split('-')[2] || 'N/A'} req/hr</span>
+              </div>
+              <div className="flex justify-between border-b border-red-900/30 pb-1">
+                <span className="text-red-200/60 uppercase tracking-widest text-xs font-bold">Actual</span>
+                <span className="font-mono text-red-500 font-bold">{alert.visitCount || alert.message.match(/reached (\d+) visits/)?.[1] || 'N/A'} req/hr</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AdminDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('nexus_auth') === 'true');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
-  const [theme, setTheme] = useState(() => localStorage.getItem('nexus_theme') || 'default');
-  
+
+  const [theme, setTheme] = useState(() => {
+    try {
+      const storedTheme = localStorage.getItem('nexus_theme');
+      return storedTheme || 'default';
+    } catch (error) {
+      console.error('Error accessing local storage for theme:', error);
+      return 'default';
+    }
+  });
+
   useEffect(() => {
-    localStorage.setItem('nexus_theme', theme);
+    try {
+      localStorage.setItem('nexus_theme', theme);
+    } catch (error) {
+      console.error('Error saving theme to local storage:', error);
+    }
+    
     const root = document.documentElement;
     root.classList.remove('theme-light', 'theme-solarized');
     if (theme === 'high-contrast') {
@@ -408,9 +500,13 @@ function AdminDashboard() {
   const [domains, setDomains] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [visits, setVisits] = useState<any[]>([]);
   const [trafficSearch, setTrafficSearch] = useState('');
+  const [domainSearch, setDomainSearch] = useState('');
+  const [alertSearch, setAlertSearch] = useState('');
+  const [selectedAlertDetails, setSelectedAlertDetails] = useState<any>(null);
   const [trafficThreshold, setTrafficThreshold] = useState<number>(500);
   
   const [alertsLog, setAlertsLog] = useState<any[]>(() => {
@@ -451,7 +547,9 @@ function AdminDashboard() {
               timestamp: new Date(hour + ':00:00Z').getTime(),
               type: 'Volume Threshold Exceeded',
               message: `High traffic volume detected. Traffic reached ${count} visits in a single hour.`,
-              severity: 'high'
+              severity: 'high',
+              visitCount: count,
+              threshold: trafficThreshold
             });
           }
         }
@@ -490,7 +588,36 @@ function AdminDashboard() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [viewingAgentVersionsId, setViewingAgentVersionsId] = useState<string | null>(null);
   const [agentVersions, setAgentVersions] = useState<any[]>([]);
+  const [heatmapLayer, setHeatmapLayer] = useState<'traffic' | 'agents'>('traffic');
+  const [heatmapTrafficThreshold, setHeatmapTrafficThreshold] = useState<number>(0);
   const [newAgentForm, setNewAgentForm] = useState({ name: '', model: 'gemini-3.1-pro-preview', instruction: '', role: 'operator', apiKey: '', personality: 'Default' });
+  const [apiKeys, setApiKeys] = useState<any[]>([]);
+  const [apiKeyUsage, setApiKeyUsage] = useState<any[]>([]);
+  const [selectedApiKeyFilter, setSelectedApiKeyFilter] = useState<string>('all');
+  const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyDomainId, setNewKeyDomainId] = useState('');
+  const [isAddingNewDomain, setIsAddingNewDomain] = useState(false);
+  const [newDomainName, setNewDomainName] = useState('');
+  const [newKeyPrefix, setNewKeyPrefix] = useState('cnx');
+  const [newKeyLength, setNewKeyLength] = useState(32);
+  const [newKeyParams, setNewKeyParams] = useState({ numbers: true, symbols: false });
+  const [newKeyWizardStep, setNewKeyWizardStep] = useState<1 | 2>(1);
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
+
+  const fetchApiKeys = async () => {
+    try {
+      const res = await fetch('/api/api-keys');
+      const data = await res.json();
+      setApiKeys(data);
+      
+      const usageRes = await fetch('/api/api-keys/usage');
+      const usageData = await usageRes.json();
+      setApiKeyUsage(usageData);
+    } catch (e) {
+      console.error('Failed to fetch API keys:', e);
+    }
+  };
 
   const fetchAgentVersions = async (id: string) => {
     const res = await fetch(`/api/agents/${id}/versions`);
@@ -529,6 +656,49 @@ function AdminDashboard() {
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `server_traffic_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  };
+
+  const exportAlertsCSV = () => {
+    if (!alertsLog || alertsLog.length === 0) return;
+    
+    // Filter alerts to match the current view
+    const filteredAlerts = alertsLog.filter(alert => {
+      if (!alertSearch) return true;
+      const term = alertSearch.toLowerCase();
+      return (alert.type || '').toLowerCase().includes(term) ||
+             (alert.message || '').toLowerCase().includes(term) ||
+             (alert.severity || '').toLowerCase().includes(term);
+    });
+
+    if (filteredAlerts.length === 0) return;
+
+    const headers = ['Timestamp', 'Severity', 'Type', 'Message'];
+    const rows = filteredAlerts.map(a => [
+      new Date(a.timestamp).toLocaleString(),
+      (a.severity || '').toUpperCase(),
+      a.type || '',
+      a.message || ''
+    ]);
+    
+    const escapeCsv = (str: any) => {
+      if (str == null) return '';
+      const s = String(str);
+      if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+
+    const csvContent = [
+      headers.map(escapeCsv).join(','),
+      ...rows.map(row => row.map(escapeCsv).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `system_alerts_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
   };
 
@@ -577,13 +747,36 @@ function AdminDashboard() {
     link.click();
   };
 
+  const exportOverviewReportJSON = () => {
+    const trafficByDomain: Record<string, number> = {};
+    visits.forEach(v => {
+      const dName = v.domain_name || v.domain_id || 'Unknown';
+      trafficByDomain[dName] = (trafficByDomain[dName] || 0) + 1;
+    });
+
+    const report = {
+      generatedOn: new Date().toISOString(),
+      domainStatistics: Object.entries(trafficByDomain).map(([domain, visits]) => ({
+        domain,
+        visits
+      }))
+    };
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `nexus_domain_stats_${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+  };
+
 
 
   const fetchAll = async () => {
-    const [dRes, cRes, uRes, aRes, vRes, agRes] = await Promise.all([
+    const [dRes, cRes, uRes, mRes, aRes, vRes, agRes] = await Promise.all([
       fetch('/api/domains').then(r => r.json()),
       fetch('/api/components').then(r => r.json()),
       fetch('/api/users').then(r => r.json()),
+      fetch('/api/members').then(r => r.json()),
       fetch('/api/ads').then(r => r.json()),
       fetch('/api/visits').then(r => r.json()),
       fetch('/api/agents').then(r => r.json())
@@ -591,6 +784,7 @@ function AdminDashboard() {
     setDomains(dRes);
     setComponents(cRes);
     setUsers(uRes);
+    setMembers(mRes);
     setAds(aRes);
     setVisits(vRes);
     setAgents(agRes);
@@ -781,6 +975,14 @@ function AdminDashboard() {
       };
       return () => sse.close();
     }
+    if (activeTab === 'apikeys') {
+      fetchApiKeys();
+      const handleRefresh = () => fetchApiKeys();
+      window.addEventListener('apikey_generated', handleRefresh);
+      return () => {
+        window.removeEventListener('apikey_generated', handleRefresh);
+      };
+    }
   }, [activeTab]);
 
   useEffect(() => {
@@ -797,6 +999,7 @@ function AdminDashboard() {
     { id: 'sql', icon: Database, label: 'SQL Engine' },
     { id: 'logs', icon: Terminal, label: 'System Events' },
     { id: 'agents_management', icon: Settings, label: 'Agents Matrix' },
+    { id: 'apikeys', icon: Key, label: 'API Access' },
     { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true }
   ];
 
@@ -857,15 +1060,6 @@ function AdminDashboard() {
             </h1>
           </div>
           <div className="flex items-center gap-4 md:gap-6">
-            <select 
-              value={theme} 
-              onChange={e => setTheme(e.target.value)}
-              className="bg-black border border-orange-800 text-orange-500 rounded px-2 md:px-3 py-1 text-xs font-bold uppercase tracking-widest outline-none cursor-pointer"
-            >
-              <option value="default">Dark Terminal</option>
-              <option value="high-contrast">High Contrast</option>
-              <option value="solarized">Solarized</option>
-            </select>
             <div className="flex items-center gap-2 text-xs md:text-sm text-red-500 font-mono animate-pulse font-bold">
               <span className="w-2 h-2 rounded-full bg-red-500"></span> <span className="hidden sm:inline">CONNECTION SECURE</span>
             </div>
@@ -878,7 +1072,7 @@ function AdminDashboard() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-6">
           
           {(() => {
             if (!visits || visits.length === 0) return null;
@@ -915,10 +1109,17 @@ function AdminDashboard() {
                  <h2 className="text-xl font-bold text-white uppercase tracking-widest text-orange-500">Dashboard Overview</h2>
                  <div className="flex items-center gap-4">
                    <button
-                     onClick={exportOverviewReportCSV}
+                     onClick={exportOverviewReportJSON}
                      className="flex items-center gap-2 bg-orange-950 border border-orange-800 hover:bg-orange-900 text-orange-400 hover:text-white px-3 py-1.5 rounded uppercase text-xs font-bold transition-colors"
                    >
                      <Download className="w-4 h-4" /> Download Report
+                   </button>
+                   <button
+                     onClick={exportOverviewReportCSV}
+                     className="flex items-center gap-2 bg-orange-950 border border-orange-800 hover:bg-orange-900 text-orange-400 hover:text-white px-3 py-1.5 rounded uppercase text-xs font-bold transition-colors"
+                     title="Export CSV"
+                   >
+                     <Download className="w-4 h-4" /> CSV
                    </button>
                    <div className="relative">
                      <button 
@@ -960,24 +1161,28 @@ function AdminDashboard() {
                    <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Systems Online</div>
                      <div className="text-4xl text-white font-mono">{domains.length}</div>
+                     <TrendIndicator data={domains} />
                    </div>
                  )}
                  {widgetConfig.accessTokens && (
                    <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Total Access Tokens</div>
                      <div className="text-4xl text-white font-mono">{users.length}</div>
+                     <TrendIndicator data={users} />
                    </div>
                  )}
                  {widgetConfig.activeCampaigns && (
                    <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Active Campaigns</div>
                      <div className="text-4xl text-white font-mono">{ads.filter(a => a.active).length}</div>
+                     <TrendIndicator data={ads} activeOnly={true} />
                    </div>
                  )}
                  {widgetConfig.networkStress && (
                    <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Network Stress</div>
                      <div className="text-4xl text-red-500 font-mono animate-pulse">{(visits.length * 2.4).toFixed(1)}%</div>
+                     <TrendIndicator data={visits} />
                    </div>
                  )}
                </div>
@@ -1080,6 +1285,46 @@ function AdminDashboard() {
                  </div>
                </div>
 
+               <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg shadow-lg shadow-orange-900/20 mb-8 mt-8">
+                 <div className="flex justify-between items-center mb-6 border-b-2 border-orange-600 pb-1">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
+                     <Settings className="w-5 h-5"/>
+                     System Preferences
+                   </h2>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="border border-orange-900 p-4 rounded bg-black shadow-[0_0_15px_rgba(234,88,12,0.1)]">
+                       <h3 className="text-orange-400 font-bold uppercase text-xs mb-3 flex items-center gap-2">
+                         <Layers className="w-4 h-4" /> Global Theme Engine
+                       </h3>
+                       <p className="text-orange-800 text-xs mb-4 leading-tight">Set the core visual layout for the CMD_CTRL operating matrix. Settings persist across active sessions.</p>
+                       <div className="space-y-3">
+                         <button
+                           onClick={() => setTheme('default')}
+                           className={cn("w-full text-left px-4 py-2 text-sm font-bold uppercase rounded border transition-colors flex items-center justify-between", theme === 'default' ? "bg-orange-600 text-white border-orange-500" : "bg-black text-orange-500 border-orange-900 hover:bg-orange-950")}
+                         >
+                           <span>Dark Terminal (Default)</span>
+                           {theme === 'default' && <span className="w-2 h-2 bg-white rounded-full"></span>}
+                         </button>
+                         <button
+                           onClick={() => setTheme('solarized')}
+                           className={cn("w-full text-left px-4 py-2 text-sm font-bold uppercase rounded border transition-colors flex items-center justify-between", theme === 'solarized' ? "bg-orange-600 text-white border-orange-500" : "bg-black text-orange-500 border-orange-900 hover:bg-orange-950")}
+                         >
+                           <span>Solarized Matrix</span>
+                           {theme === 'solarized' && <span className="w-2 h-2 bg-white rounded-full"></span>}
+                         </button>
+                         <button
+                           onClick={() => setTheme('high-contrast')}
+                           className={cn("w-full text-left px-4 py-2 text-sm font-bold uppercase rounded border transition-colors flex items-center justify-between", theme === 'high-contrast' ? "bg-orange-600 text-white border-orange-500" : "bg-black text-orange-500 border-orange-900 hover:bg-orange-950")}
+                         >
+                           <span>High Contrast Light</span>
+                           {theme === 'high-contrast' && <span className="w-2 h-2 bg-white rounded-full"></span>}
+                         </button>
+                       </div>
+                    </div>
+                 </div>
+               </div>
+
                <div>
                  <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
                    <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
@@ -1162,18 +1407,65 @@ function AdminDashboard() {
                      <Globe className="w-5 h-5"/>
                      Global Traffic Heatmap
                    </h2>
+                   <div className="flex justify-end items-center gap-2">
+                     {heatmapLayer === 'traffic' && (
+                       <div className="flex items-center gap-2 mr-2">
+                         <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">Intensity Threshold:</span>
+                         <input 
+                           type="range" 
+                           min="0" 
+                           max="50" 
+                           value={heatmapTrafficThreshold} 
+                           onChange={e => setHeatmapTrafficThreshold(parseInt(e.target.value))}
+                           className="w-20 accent-orange-600"
+                         />
+                         <span className="text-xs text-white font-mono w-4 text-right">{heatmapTrafficThreshold}</span>
+                       </div>
+                     )}
+                     <button 
+                       onClick={() => { setHeatmapLayer('traffic'); setHeatmapTrafficThreshold(0); }}
+                       className={`text-[10px] px-2 py-1 font-bold rounded uppercase tracking-widest border transition-colors ${heatmapLayer === 'traffic' ? 'bg-orange-600 border-orange-600 text-white shadow-[0_0_10px_rgba(234,88,12,0.5)]' : 'border-orange-600/50 text-orange-400 hover:bg-orange-900/50'}`}
+                     >
+                       Traffic Density
+                     </button>
+                     <button 
+                       onClick={() => setHeatmapLayer('agents')}
+                       className={`text-[10px] px-2 py-1 font-bold rounded uppercase tracking-widest border transition-colors ${heatmapLayer === 'agents' ? 'bg-blue-600 border-blue-600 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'border-blue-600/50 text-blue-400 hover:bg-blue-900/50'}`}
+                     >
+                       Agent Coverage
+                     </button>
+                   </div>
                  </div>
                  {(() => {
-                   const trafficByCountry: Record<string, number> = {};
-                   visits.forEach(v => {
-                     if (!v.country) return;
-                     let code = v.country.toUpperCase();
-                     if (code === 'UK') code = 'GB';
-                     trafficByCountry[code] = (trafficByCountry[code] || 0) + 1;
-                   });
+                   const dataByCountry: Record<string, number> = {};
                    
-                   const maxVisits = Math.max(1, ...Object.values(trafficByCountry));
-                   const colorScale = scaleLinear<string>().domain([0, maxVisits]).range(["#ffedd5", "#ea580c"]);
+                   if (heatmapLayer === 'traffic') {
+                     visits.forEach(v => {
+                       if (!v.country) return;
+                       let code = v.country.toUpperCase();
+                       if (code === 'UK') code = 'GB';
+                       dataByCountry[code] = (dataByCountry[code] || 0) + 1;
+                     });
+                   } else {
+                     dataByCountry['US'] = 145;
+                     dataByCountry['GB'] = 82;
+                     dataByCountry['AU'] = 54;
+                     dataByCountry['CA'] = 31;
+                     dataByCountry['DE'] = 12;
+                     dataByCountry['IN'] = 8;
+                     dataByCountry['FR'] = 5;
+                   }
+                   
+                   const maxVal = Math.max(1, ...Object.values(dataByCountry));
+                   const colorScale = heatmapLayer === 'traffic' 
+                     ? scaleLinear<string>().domain([0, maxVal]).range(["#ffedd5", "#ea580c"])
+                     : scaleLinear<string>().domain([0, maxVal]).range(["#dbeafe", "#2563eb"]);
+
+                   const strokeColor = heatmapLayer === 'traffic' ? "#ea580c" : "#2563eb";
+                   const hoverColor = heatmapLayer === 'traffic' ? "#f97316" : "#3b82f6";
+                   const pressedColor = heatmapLayer === 'traffic' ? "#c2410c" : "#1d4ed8";
+                   const emptyFill = heatmapLayer === 'traffic' ? "#1a0800" : "#0f172a";
+                   const tooltipBg = heatmapLayer === 'traffic' ? "#ea580c" : "#2563eb";
 
                    const nameToIso: Record<string, string> = {
                      'United States of America': 'US',
@@ -1190,34 +1482,37 @@ function AdminDashboard() {
                    };
 
                    return (
-                     <div className="bg-orange-950/40 border border-orange-900 p-4 rounded shadow-lg mb-8">
-                       <div className="h-[400px] w-full flex items-center justify-center">
+                     <div className={`border p-4 rounded shadow-lg mb-8 ${heatmapLayer === 'traffic' ? 'bg-orange-950/40 border-orange-900' : 'bg-blue-950/40 border-blue-900'}`}>
+                       <div className="h-[400px] w-full flex items-center justify-center relative">
                          <ComposableMap 
                            projection="geoMercator" 
                            projectionConfig={{ scale: 120 }}
                            style={{ width: "100%", height: "100%" }}
                          >
-                           <Sphere stroke="#7c2d12" strokeWidth={0.5} id="sphere" fill="transparent" />
-                           <Graticule stroke="#7c2d12" strokeWidth={0.2} strokeOpacity={0.5} />
+                           <Sphere stroke={strokeColor} strokeWidth={0.5} id="sphere" fill="transparent" />
+                           <Graticule stroke={strokeColor} strokeWidth={0.2} strokeOpacity={0.5} />
                            <Geographies geography="https://unpkg.com/world-atlas@2.0.2/countries-110m.json">
                              {({ geographies }) =>
                                geographies.map((geo) => {
                                  const countryName = geo.properties.name;
                                  const isoCode = nameToIso[countryName] || geo.id; 
-                                 const value = trafficByCountry[isoCode as string] || trafficByCountry[countryName] || 0;
+                                 let value = dataByCountry[isoCode as string] || dataByCountry[countryName] || 0;
+                                 if (heatmapLayer === 'traffic' && value < heatmapTrafficThreshold) {
+                                   value = 0;
+                                 }
                                  return (
                                    <Geography
                                      key={geo.rsmKey}
                                      geography={geo}
-                                     fill={value ? colorScale(value) : "#1a0800"}
-                                     stroke="#ea580c"
+                                     fill={value ? colorScale(value) : emptyFill}
+                                     stroke={strokeColor}
                                      strokeWidth={0.2}
                                      data-tooltip-id="global-traffic-tooltip"
-                                     data-tooltip-content={`${countryName}: ${value} visits`}
+                                     data-tooltip-content={`${countryName}: ${value} ${heatmapLayer === 'traffic' ? 'visits' : 'agents'}`}
                                      style={{
                                        default: { outline: "none", transition: "all 250ms" },
-                                       hover: { fill: "#f97316", outline: "none", cursor: "pointer", strokeWidth: 0.5 },
-                                       pressed: { fill: "#c2410c", outline: "none" },
+                                       hover: { fill: hoverColor, outline: "none", cursor: "pointer", strokeWidth: 0.5 },
+                                       pressed: { fill: pressedColor, outline: "none" },
                                      }}
                                    />
                                  );
@@ -1227,8 +1522,16 @@ function AdminDashboard() {
                          </ComposableMap>
                          <ReactTooltip 
                            id="global-traffic-tooltip" 
-                           style={{ backgroundColor: '#ea580c', color: '#000', fontWeight: 'bold' }} 
+                           style={{ backgroundColor: tooltipBg, color: '#fff', fontWeight: 'bold' }} 
                          />
+                         <div className={`absolute bottom-4 left-4 p-3 rounded shadow-lg flex flex-col gap-1 text-xs text-white border backdrop-blur-sm ${heatmapLayer === 'traffic' ? 'bg-orange-950/80 border-orange-900' : 'bg-blue-950/80 border-blue-900'}`}>
+                           <div className="font-bold opacity-80 uppercase tracking-widest">{heatmapLayer === 'traffic' ? 'Traffic Density' : 'Agent Coverage'}</div>
+                           <div className="flex items-center gap-3 mt-1 text-[10px] font-mono">
+                              <span className="opacity-60 text-right w-4">0</span>
+                              <div className="w-32 h-2 rounded-full" style={{ background: heatmapLayer === 'traffic' ? 'linear-gradient(to right, #ffedd5, #ea580c)' : 'linear-gradient(to right, #dbeafe, #2563eb)' }}></div>
+                              <span className="opacity-60">{maxVal}</span>
+                           </div>
+                         </div>
                        </div>
                      </div>
                    );
@@ -1241,30 +1544,60 @@ function AdminDashboard() {
                      <Server className="w-5 h-5"/>
                      Active Domain Controllers ({domains.length})
                    </h2>
-                   <button onClick={() => {
-                     const name = window.prompt("Enter App/Domain Name (e.g. app.myapp.com)");
-                     if (!name) return;
-                     const description = window.prompt("Enter Description");
-                     const id = 'd' + Date.now();
-                     fetch('/api/domains', {
-                       method: 'POST',
-                       headers: { 'Content-Type': 'application/json' },
-                       body: JSON.stringify({ id, name, description: description || '' })
-                     }).then(fetchAll);
-                   }} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 uppercase tracking-wide transition-colors">
-                     <Plus className="w-4 h-4"/> Add App
-                   </button>
+                   <div className="flex items-center gap-3">
+                     <div className="relative hidden md:block">
+                       <input 
+                         type="text" 
+                         value={domainSearch} 
+                         onChange={e => setDomainSearch(e.target.value)} 
+                         placeholder="Filter Domains..." 
+                         className="bg-black border border-orange-800 text-orange-200 px-3 py-1 pl-8 rounded text-sm focus:outline-none focus:border-orange-500 transition-colors w-48 lg:w-64 focus:ring-1 focus:ring-orange-500 font-mono"
+                       />
+                       <Search className="w-4 h-4 text-orange-800 absolute left-2.5 top-1.5" />
+                     </div>
+                     <button onClick={() => {
+                       const name = window.prompt("Enter App/Domain Name (e.g. app.myapp.com)");
+                       if (!name) return;
+                       const description = window.prompt("Enter Description");
+                       const id = 'd' + Date.now();
+                       fetch('/api/domains', {
+                         method: 'POST',
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ id, name, description: description || '' })
+                       }).then(fetchAll);
+                     }} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 uppercase tracking-wide transition-colors">
+                       <Plus className="w-4 h-4"/> Add App
+                     </button>
+                   </div>
+                 </div>
+                 <div className="md:hidden relative mb-4">
+                   <input 
+                     type="text" 
+                     value={domainSearch} 
+                     onChange={e => setDomainSearch(e.target.value)} 
+                     placeholder="Filter Domains..." 
+                     className="bg-black border border-orange-800 text-orange-200 px-3 py-2 pl-8 rounded text-sm focus:outline-none focus:border-orange-500 transition-colors w-full focus:ring-1 focus:ring-orange-500 font-mono"
+                   />
+                   <Search className="w-4 h-4 text-orange-800 absolute left-2.5 top-2.5" />
                  </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                   {domains.map(d => (
-                     <div key={d.id} className="bg-orange-950 border border-orange-800 p-6 rounded-lg hover:border-orange-500 transition-colors shadow-lg shadow-orange-900/20">
-                       <div className="font-bold text-xl text-white mb-1">{d.name}</div>
+                   {domains.filter(d => 
+                     d.name.toLowerCase().includes(domainSearch.toLowerCase()) || 
+                     (d.description && d.description.toLowerCase().includes(domainSearch.toLowerCase()))
+                   ).map(d => (
+                     <div key={d.id} className="bg-orange-950 border border-orange-800 p-6 rounded-lg hover:border-orange-500 transition-colors shadow-lg shadow-orange-900/20 flex flex-col md:flex-row justify-between items-start xl:items-center gap-4">
+                       <div>
+                         <div className="font-bold text-xl text-white mb-1">{d.name}</div>
                        <div className="text-sm text-orange-300 mb-4">{d.description}</div>
                        <Link to={`/preview/${d.name}`} className="inline-flex items-center gap-2 text-sm bg-orange-600 hover:bg-orange-500 px-4 py-2 rounded font-bold text-white transition">
                          <ExternalLink className="w-4 h-4"/> Connect Tunnel
-                       </Link>
-                     </div>
-                   ))}
+                        </Link>
+                      </div>
+                      <div className="bg-white p-2 rounded shrink-0 shadow-inner">
+                        <QRCodeSVG value={`${window.location.origin}/preview/${d.name}`} size={80} level="M" />
+                      </div>
+                    </div>
+                  ))}
                    
                    <div className="border border-dashed border-orange-800 rounded-lg flex items-center justify-center p-6 hover:bg-orange-950/50 cursor-pointer transition-colors text-orange-500 hover:text-orange-400">
                      <div className="flex flex-col items-center gap-2">
@@ -1279,56 +1612,121 @@ function AdminDashboard() {
 
           {/* MEMBERS TAB */}
           {activeTab === 'members' && (
-            <div className="animate-in fade-in duration-300">
-              <div className="flex items-center justify-between mb-4">
-                 <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1">Access Control & Member Oversight</h2>
-                 <button onClick={() => { setShowAuthModal(true); fetchAuthSettings(); }} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide transition-colors">
-                   <LockKeyhole className="w-4 h-4"/> Global Auth Settings
-                 </button>
-              </div>
-              <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
-                <table className="min-w-full divide-y divide-orange-900">
-                  <thead className="bg-orange-950">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">User / Email</th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Privilege Level</th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Created</th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Security Status</th>
-                      <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-orange-900 text-sm">
-                    {users.map(u => (
-                      <tr key={u.id} className="hover:bg-orange-950/30">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="font-bold text-white">{u.email}</div>
-                          <div className="text-orange-500 text-xs font-mono">UID: {u.id}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={cn("px-3 py-1 inline-flex text-xs leading-5 font-bold uppercase rounded-none border border-orange-800", u.role === 'admin' ? "bg-orange-900 text-orange-200" : "bg-black text-orange-500")}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-orange-400 font-mono text-xs">
-                          {new Date(u.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {u.is_banned ? (
-                            <span className="text-red-500 font-bold flex items-center gap-1 uppercase text-xs"><ShieldBan className="w-4 h-4"/> Revoked</span>
-                          ) : (
-                            <span className="text-green-500 font-bold flex items-center gap-1 uppercase text-xs"><UserCheck className="w-4 h-4"/> Active</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right font-medium">
-                          <button onClick={() => toggleBan(u.id, u.is_banned)} className={cn("px-4 py-2 font-bold uppercase text-xs rounded transition-colors border", u.is_banned ? "text-orange-300 border-orange-700 bg-black hover:bg-orange-900" : "text-black bg-red-600 border-red-500 hover:bg-red-500")}>
-                            {u.is_banned ? 'Restore Access' : 'Ban Identity'}
-                          </button>
-                        </td>
+            <div className="animate-in fade-in duration-300 space-y-8">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1">Access Control & System Administrators</h2>
+                   <button onClick={() => { setShowAuthModal(true); fetchAuthSettings(); }} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide transition-colors">
+                     <LockKeyhole className="w-4 h-4"/> Global Auth Settings
+                   </button>
+                </div>
+                <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                  <table className="min-w-full divide-y divide-orange-900">
+                    <thead className="bg-orange-950">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">User / Email</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Privilege Level</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Created</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Security Status</th>
+                        <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-orange-900 text-sm">
+                      {users.map(u => (
+                        <tr key={u.id} className="hover:bg-orange-950/30">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="font-bold text-white">{u.email}</div>
+                            <div className="text-orange-500 text-xs font-mono">UID: {u.id}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={cn("px-3 py-1 inline-flex text-xs leading-5 font-bold uppercase rounded-none border border-orange-800", u.role === 'admin' ? "bg-orange-900 text-orange-200" : "bg-black text-orange-500")}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-orange-400 font-mono text-xs">
+                            {new Date(u.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {u.is_banned ? (
+                              <span className="text-red-500 font-bold flex items-center gap-1 uppercase text-xs"><ShieldBan className="w-4 h-4"/> Revoked</span>
+                            ) : (
+                              <span className="text-green-500 font-bold flex items-center gap-1 uppercase text-xs"><UserCheck className="w-4 h-4"/> Active</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right font-medium">
+                            <button onClick={() => toggleBan(u.id, u.is_banned)} className={cn("px-4 py-2 font-bold uppercase text-xs rounded transition-colors border", u.is_banned ? "text-orange-300 border-orange-700 bg-black hover:bg-orange-900" : "text-black bg-red-600 border-red-500 hover:bg-red-500")}>
+                              {u.is_banned ? 'Restore Access' : 'Ban Identity'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                   <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 border-b-2 border-orange-600 pb-1 flex items-center gap-2">
+                     <Users className="w-5 h-5"/>
+                     Harvested Neural Leads
+                   </h2>
+                   <div className="bg-orange-950 px-3 py-1 text-orange-400 text-xs font-mono rounded border border-orange-800">
+                     Total Leads: {members.length}
+                   </div>
+                </div>
+                <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                  <table className="min-w-full divide-y divide-orange-900">
+                    <thead className="bg-orange-950">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Email / Source</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Intent Score</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Campaign / Agent</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Last Activity</th>
+                        <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Network Data</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-orange-900 text-sm">
+                      {members.map(m => (
+                        <tr key={m.id} className="hover:bg-orange-950/30">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="font-bold text-white">{m.email}</div>
+                            <div className="text-orange-500 text-xs font-mono uppercase tracking-widest">Source: {m.source}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={cn("px-3 py-1 inline-flex text-xs leading-5 font-bold uppercase rounded-none border border-orange-800", m.intent_score > 80 ? "bg-red-900/30 text-red-500 border-red-500" : "bg-black text-orange-500")}>
+                              {m.intent_score}% 
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-orange-400 font-mono text-xs">{m.campaign_id || 'Organic'}</div>
+                            <div className="text-gray-500 text-xs max-w-[150px] truncate" title={m.user_agent}>{m.user_agent || 'Unknown'}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-orange-400 font-mono text-xs">
+                              {new Date(m.last_seen || m.created_at).toLocaleString()}
+                            </div>
+                            <div className="text-orange-600 font-mono text-[10px]">
+                              Created: {new Date(m.created_at).toLocaleDateString()}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-xs font-mono text-orange-300">
+                            {m.ip_address || 'Proxy / Hidden'}
+                          </td>
+                        </tr>
+                      ))}
+                      {members.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">
+                            No neural leads harvested yet
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
             </div>
           )}
 
@@ -1589,17 +1987,106 @@ function AdminDashboard() {
           {/* ALERTS TAB */}
           {activeTab === 'alerts' && (
             <div className="animate-in fade-in duration-300 space-y-6">
+              
+              <TrafficVolumeAlerts alerts={alertsLog} />
+
+              {(() => {
+                const now = Date.now();
+                const thirtyDaysAgo = now - 30 * 24 * 3600 * 1000;
+                const dailyCounts = new Map<string, number>();
+                
+                // Initialize last 30 days
+                for (let i = 29; i >= 0; i--) {
+                  const d = new Date(now - i * 24 * 3600 * 1000).toISOString().split('T')[0];
+                  dailyCounts.set(d, 0);
+                }
+                
+                alertsLog.forEach(alert => {
+                  if (alert.timestamp >= thirtyDaysAgo) {
+                    const d = new Date(alert.timestamp).toISOString().split('T')[0];
+                    if (dailyCounts.has(d)) {
+                      dailyCounts.set(d, dailyCounts.get(d)! + 1);
+                    }
+                  }
+                });
+                
+                const chartData = Array.from(dailyCounts.entries()).map(([date, count]) => ({ date, count }));
+                
+                return (
+                  <div className="bg-orange-950/20 border border-orange-900 rounded-lg p-6">
+                     <h3 className="text-orange-500 font-bold uppercase tracking-widest text-sm mb-6 flex items-center gap-2">
+                       <TrendingUp className="w-4 h-4" /> Trend: Alert Frequency (30 Days)
+                     </h3>
+                     <div className="h-[200px] w-full">
+                       <ResponsiveContainer width="100%" height="100%">
+                         <AreaChart data={chartData}>
+                           <defs>
+                             <linearGradient id="colorAlerts" x1="0" y1="0" x2="0" y2="1">
+                               <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
+                               <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                             </linearGradient>
+                           </defs>
+                           <CartesianGrid strokeDasharray="3 3" stroke="#9a3412" opacity={0.3} />
+                           <XAxis 
+                             dataKey="date" 
+                             stroke="#fdba74" 
+                             tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}
+                             fontSize={12}
+                           />
+                           <YAxis stroke="#fdba74" fontSize={12} allowDecimals={false} />
+                           <Tooltip 
+                             contentStyle={{ backgroundColor: '#431407', borderColor: '#ef4444', color: '#fff' }} 
+                           />
+                           <Area type="monotone" dataKey="count" name="Alerts" stroke="#ef4444" fillOpacity={1} fill="url(#colorAlerts)" />
+                         </AreaChart>
+                       </ResponsiveContainer>
+                     </div>
+                  </div>
+                );
+              })()}
+
               <div className="flex justify-between items-center mb-4 border-b-2 border-orange-600 pb-1">
                 <h2 className="text-lg font-bold text-white uppercase tracking-widest text-orange-500 inline-block flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5"/>
                   System Alerts Log
                 </h2>
                 <div className="flex items-center gap-4">
+                  <div className="relative hidden md:block">
+                    <input 
+                      type="text" 
+                      value={alertSearch} 
+                      onChange={e => setAlertSearch(e.target.value)} 
+                      placeholder="Filter Alerts..." 
+                      className="bg-black border border-orange-800 text-orange-200 px-3 py-1 pl-8 rounded text-sm focus:outline-none focus:border-orange-500 transition-colors w-48 lg:w-64 focus:ring-1 focus:ring-orange-500 font-mono"
+                    />
+                    <Search className="w-4 h-4 text-orange-800 absolute left-2.5 top-1.5" />
+                  </div>
                   <span className="text-xs font-mono text-orange-400">Total Alerts: {alertsLog.length}</span>
-                  <button onClick={() => setAlertsLog([])} className="text-xs font-bold uppercase tracking-widest bg-orange-950/50 hover:bg-orange-900 border border-orange-800 text-orange-400 py-1.5 px-3 rounded transition-colors flex items-center gap-2">
+                  <button onClick={exportAlertsCSV} className="text-xs font-bold uppercase tracking-widest bg-orange-950/50 hover:bg-orange-900 border border-orange-800 text-orange-400 py-1.5 px-3 rounded transition-colors flex items-center gap-2">
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                  <button onClick={() => {
+                    setConfirmDialog({
+                      isOpen: true,
+                      title: 'Clear System Alerts Log',
+                      message: 'Are you sure you want to permanently delete all system alerts?',
+                      onConfirm: () => setAlertsLog([])
+                    });
+                  }} className="text-xs font-bold uppercase tracking-widest bg-orange-950/50 hover:bg-orange-900 border border-orange-800 text-orange-400 py-1.5 px-3 rounded transition-colors flex items-center gap-2">
                     <Trash2 className="w-4 h-4" /> Clear Log
                   </button>
                 </div>
+              </div>
+              
+              <div className="md:hidden relative mb-4">
+                <input 
+                  type="text" 
+                  value={alertSearch} 
+                  onChange={e => setAlertSearch(e.target.value)} 
+                  placeholder="Filter Alerts..." 
+                  className="bg-black border border-orange-800 text-orange-200 px-3 py-2 pl-8 rounded text-sm focus:outline-none focus:border-orange-500 transition-colors w-full focus:ring-1 focus:ring-orange-500 font-mono"
+                />
+                <Search className="w-4 h-4 text-orange-800 absolute left-2.5 top-2.5" />
               </div>
 
               <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900 shadow-xl">
@@ -1610,34 +2097,130 @@ function AdminDashboard() {
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Severity</th>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Alert Type</th>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Details</th>
+                      <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-orange-900 text-sm">
-                    {alertsLog.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">No alerts recorded</td>
-                      </tr>
-                    ) : (
-                      alertsLog.map((alert: any) => (
-                        <tr key={alert.id} className="hover:bg-orange-950/30 transition-colors">
-                          <td className="px-6 py-4 whitespace-nowrap text-orange-500 font-mono text-xs">
-                            {new Date(alert.timestamp).toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {alert.severity === 'high' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-red-950 border border-red-800 text-red-500">HIGH</span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-yellow-950 border border-yellow-800 text-yellow-500">MEDIUM</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap font-bold text-white uppercase text-xs tracking-widest">{alert.type}</td>
-                          <td className="px-6 py-4 text-orange-300 text-sm max-w-lg truncate" title={alert.message}>{alert.message}</td>
-                        </tr>
-                      ))
-                    )}
+                    {(() => {
+                      const filteredAlerts = alertsLog.filter(alert => {
+                        if (!alertSearch) return true;
+                        const term = alertSearch.toLowerCase();
+                        return (alert.type || '').toLowerCase().includes(term) ||
+                               (alert.message || '').toLowerCase().includes(term) ||
+                               (alert.severity || '').toLowerCase().includes(term);
+                      });
+
+                      return (
+                        <>
+                          {filteredAlerts.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="px-6 py-8 text-center text-orange-600 font-bold uppercase tracking-widest">No alerts recorded</td>
+                            </tr>
+                          ) : (
+                            filteredAlerts.map((alert: any) => (
+                              <tr key={alert.id} className="hover:bg-orange-950/30 transition-colors">
+                                <td className="px-6 py-4 whitespace-nowrap text-orange-500 font-mono text-xs">
+                                  {new Date(alert.timestamp).toLocaleString()}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  {alert.severity === 'high' ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-red-950 border border-red-800 text-red-500">HIGH</span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-yellow-950 border border-yellow-800 text-yellow-500">MEDIUM</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap font-bold text-white uppercase text-xs tracking-widest">
+                                  <div className="flex items-center gap-2">
+                                    {alert.type === 'Volume Threshold Exceeded' ? <Activity className="w-4 h-4 text-red-500" /> : 
+                                     alert.type === 'Traffic Growth Alert' ? <TrendingUp className="w-4 h-4 text-blue-500" /> : 
+                                     <AlertTriangle className="w-4 h-4 text-yellow-500" />}
+                                    {alert.type}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 text-orange-300 text-sm max-w-lg truncate" title={alert.message}>{alert.message}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-right">
+                                  <button onClick={() => setSelectedAlertDetails(alert)} className="text-xs font-bold uppercase tracking-widest bg-orange-900 border border-orange-700 hover:bg-orange-600 text-white py-1 px-3 rounded transition-colors">
+                                    Details
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
+
+              {/* Alert Details Modal */}
+              {selectedAlertDetails && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setSelectedAlertDetails(null)}>
+                  <div className="bg-black border-2 border-red-900 rounded-lg max-w-2xl w-full p-6 shadow-[0_0_50px_rgba(220,38,38,0.3)] animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-start mb-6 border-b border-red-900/50 pb-4">
+                      <div className="flex items-center gap-3">
+                        {selectedAlertDetails.type === 'Volume Threshold Exceeded' ? <Activity className="w-6 h-6 text-red-500" /> : 
+                         selectedAlertDetails.type === 'Traffic Growth Alert' ? <TrendingUp className="w-6 h-6 text-blue-500" /> : 
+                         <AlertTriangle className="w-6 h-6 text-yellow-500" />}
+                        <div>
+                          <h3 className="text-xl font-bold text-white uppercase tracking-widest">{selectedAlertDetails.type}</h3>
+                          <div className="text-orange-500 font-mono text-sm">{new Date(selectedAlertDetails.timestamp).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <button onClick={() => setSelectedAlertDetails(null)} className="text-orange-500 hover:text-white transition-colors bg-red-950/30 p-2 rounded-lg">
+                        <X className="w-5 h-5"/>
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-6">
+                      <div className="bg-red-950/20 border-l-4 border-red-500 p-4 rounded-r">
+                        <h4 className="text-xs font-bold uppercase tracking-widest text-red-400 mb-1">Alert Description</h4>
+                        <p className="text-orange-200">{selectedAlertDetails.message}</p>
+                      </div>
+
+                      {selectedAlertDetails.type === 'Volume Threshold Exceeded' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-black border border-orange-900 p-4 rounded">
+                            <div className="text-xs font-bold uppercase tracking-widest text-orange-400 mb-1">Volume Threshold</div>
+                            <div className="text-2xl font-mono text-white">{selectedAlertDetails.threshold || 'N/A'} <span className="text-sm text-orange-500">req/hr</span></div>
+                          </div>
+                          <div className="bg-black border border-red-900 p-4 rounded shadow-[inset_0_0_20px_rgba(220,38,38,0.1)]">
+                            <div className="text-xs font-bold uppercase tracking-widest text-red-400 mb-1">Actual Volume</div>
+                            <div className="text-2xl font-mono text-red-500 font-bold">{selectedAlertDetails.visitCount || 'N/A'} <span className="text-sm">req/hr</span></div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="bg-black border border-orange-900 rounded p-4">
+                         <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-orange-400 mb-3 border-b border-orange-900/50 pb-2">
+                           <ShieldAlert className="w-4 h-4" /> Recommended Remediation
+                         </h4>
+                         <ul className="list-disc list-inside text-orange-200 text-sm space-y-2">
+                           {selectedAlertDetails.type === 'Volume Threshold Exceeded' ? (
+                             <>
+                               <li>Review firewall rules for potential DDoS attack signatures.</li>
+                               <li>Identify IP blocks exhibiting abnormal request rates globally.</li>
+                               <li>Verify if traffic is organic (e.g., promotional campaign spike).</li>
+                               <li>Consider temporarily lowering rate-limits on API endpoints.</li>
+                             </>
+                           ) : selectedAlertDetails.type === 'Traffic Growth Alert' ? (
+                             <>
+                               <li>Validate campaign attributions to ensure growth is legitimate.</li>
+                               <li>Prepare backend infrastructure for sustained higher load.</li>
+                               <li>Monitor database connections and latency closely.</li>
+                             </>
+                           ) : (
+                             <>
+                               <li>Review system logs corresponding to the designated timestamp.</li>
+                               <li>Escalate to engineering if anomaly persists for &gt; 15 mins.</li>
+                             </>
+                           )}
+                         </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1833,6 +2416,380 @@ function AdminDashboard() {
             </div>
           )}
 
+          {/* API KEYS TAB */}
+          {activeTab === 'apikeys' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                 <h2 className="text-xl font-bold text-white border-b-2 border-orange-600 inline-block pb-1 flex items-center gap-2">
+                   <Key className="w-5 h-5 text-orange-500" /> API Access Management
+                 </h2>
+              </div>
+              
+              <div className="bg-orange-950/20 border border-orange-900 rounded-lg p-6">
+                <h3 className="text-orange-500 font-bold uppercase tracking-widest text-sm mb-4 flex items-center gap-2">
+                  Generate New API Key {newKeyWizardStep === 2 && <span className="text-orange-800">/ Advanced Config</span>}
+                </h3>
+                
+                {newKeyWizardStep === 1 ? (
+                  <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div>
+                      <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Key Appellation</label>
+                      <input 
+                        type="text" 
+                        placeholder="Key Name (e.g., Frontend App)" 
+                        value={newKeyName}
+                        onChange={(e) => setNewKeyName(e.target.value)}
+                        className="w-full bg-black border border-orange-900 text-orange-200 px-4 py-3 rounded focus:outline-none focus:border-orange-500 min-w-0 placeholder-orange-900/50"
+                      />
+                      <p className="text-orange-800 text-xs mt-2 italic">Provide a memorable name to identify this key's purpose later.</p>
+                    </div>
+                    <div className="flex justify-between mt-2 items-center">
+                       <div className="flex flex-col gap-1">
+                          <div className="flex gap-1.5 items-center">
+                            <div className="w-6 h-1.5 bg-orange-600 rounded-full"></div>
+                            <div className="w-2 h-1.5 bg-orange-900 rounded-full"></div>
+                          </div>
+                          <div className="text-[10px] text-orange-600 uppercase font-bold tracking-widest">Step 1 of 2</div>
+                       </div>
+                       <button
+                         onClick={() => setNewKeyWizardStep(2)}
+                         disabled={!newKeyName.trim()}
+                         className="w-full sm:w-auto px-8 py-3 bg-orange-900 border border-orange-600 hover:bg-orange-800 disabled:opacity-50 disabled:hover:bg-orange-900 text-white rounded uppercase text-xs font-bold flex items-center justify-center gap-2 transition-colors shrink-0 outline-none"
+                       >
+                         Next: Advanced Configuration <ChevronRight className="w-4 h-4" />
+                       </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-5 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="p-4 bg-black border border-orange-900 rounded-lg shadow-inner">
+                      <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1 flex items-center justify-between">
+                         <span>App / Domain Scope</span>
+                         <button 
+                            onClick={() => setIsAddingNewDomain(!isAddingNewDomain)}
+                            className="text-orange-500 hover:text-white"
+                         >
+                            {isAddingNewDomain ? "Cancel" : "+ Add New App"}
+                         </button>
+                      </label>
+                      {isAddingNewDomain ? (
+                        <div className="flex gap-2 mt-2">
+                           <input 
+                             type="text" 
+                             value={newDomainName}
+                             onChange={e => setNewDomainName(e.target.value)}
+                             placeholder="e.g. commandnexus.net"
+                             className="w-full bg-black border border-orange-900 text-orange-200 px-4 py-2 rounded focus:outline-none focus:border-orange-500 min-w-0"
+                             onKeyDown={async (e) => {
+                               if (e.key === 'Enter' && newDomainName.trim()) {
+                                  const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+                                  const res = await fetch('/api/domains', {
+                                     method: 'POST',
+                                     headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ id, name: newDomainName.trim(), description: 'Added via API Dashboard' })
+                                  });
+                                  if (res.ok) {
+                                     await fetchAll();
+                                     setNewKeyDomainId(id);
+                                     setNewDomainName('');
+                                     setIsAddingNewDomain(false);
+                                  } else {
+                                     alert("Failed to add domain.");
+                                  }
+                               }
+                             }}
+                           />
+                           <button 
+                              onClick={async () => {
+                                  if (!newDomainName.trim()) return;
+                                  const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+                                  const res = await fetch('/api/domains', {
+                                     method: 'POST',
+                                     headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ id, name: newDomainName.trim(), description: 'Added via API Dashboard' })
+                                  });
+                                  if (res.ok) {
+                                     await fetchAll();
+                                     setNewKeyDomainId(id);
+                                     setNewDomainName('');
+                                     setIsAddingNewDomain(false);
+                                  } else {
+                                     alert("Failed to add domain.");
+                                  }
+                              }}
+                              disabled={!newDomainName.trim()}
+                              className="px-4 py-2 bg-orange-600 hover:bg-orange-500 mt-0 text-white rounded text-sm font-bold uppercase disabled:opacity-50"
+                           >
+                              Save
+                           </button>
+                        </div>
+                      ) : (
+                        <select
+                          value={newKeyDomainId}
+                          onChange={e => setNewKeyDomainId(e.target.value)}
+                          className="w-full bg-black border border-orange-900 text-orange-200 px-4 py-2 rounded focus:outline-none focus:border-orange-500 mt-2"
+                        >
+                          <option value="">Global Access (CommandNexus System)</option>
+                          {domains.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                        </select>
+                      )}
+                      <p className="text-orange-800 text-[10px] mt-2 uppercase tracking-wide">Leave as Global Access to allow the key to perform any operation across the system.</p>
+                    </div>
+
+                    <div className="p-4 bg-black border border-orange-900 rounded-lg shadow-inner">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
+                        <div className="flex-1">
+                          <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Prefix</label>
+                          <input 
+                             type="text" 
+                             value={newKeyPrefix} 
+                             onChange={e => setNewKeyPrefix(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))} 
+                             className="w-full bg-black border border-orange-900 text-orange-200 px-4 py-2 rounded focus:outline-none focus:border-orange-500 min-w-0 font-mono" 
+                             placeholder="cnx" 
+                             maxLength={8} 
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1 flex justify-between">
+                            <span>Length</span>
+                            <span className="text-orange-500">{newKeyLength} chars</span>
+                          </label>
+                          <input 
+                             type="range" 
+                             min={16} 
+                             max={64} 
+                             value={newKeyLength} 
+                             onChange={e => setNewKeyLength(Number(e.target.value))} 
+                             className="w-full accent-orange-600 h-2 bg-black rounded outline-none appearance-none mt-3" 
+                          />
+                        </div>
+                        <div className="flex-1 flex gap-2">
+                          <label className={cn("flex-1 text-center cursor-pointer border rounded px-2 py-2 text-[10px] font-bold uppercase transition-colors flex items-center justify-center gap-1", newKeyParams.numbers ? "bg-orange-900 border-orange-500 text-white" : "bg-black border-orange-900 text-orange-500")}>
+                            <input type="checkbox" className="hidden" checked={newKeyParams.numbers} onChange={e => setNewKeyParams({...newKeyParams, numbers: e.target.checked})} />
+                            [1-9] Nums
+                          </label>
+                          <label className={cn("flex-1 text-center cursor-pointer border rounded px-2 py-2 text-[10px] font-bold uppercase transition-colors flex items-center justify-center gap-1", newKeyParams.symbols ? "bg-orange-900 border-orange-500 text-white" : "bg-black border-orange-900 text-orange-500")}>
+                            <input type="checkbox" className="hidden" checked={newKeyParams.symbols} onChange={e => setNewKeyParams({...newKeyParams, symbols: e.target.checked})} />
+                            [@#$] Syms
+                          </label>
+                        </div>
+                      </div>
+                      <p className="text-orange-800 text-[10px] mt-3 uppercase tracking-wide">Customize the final string format for the bearer token output.</p>
+                    </div>
+
+                    <div className="flex justify-between items-center mt-2">
+                      <div className="flex flex-col gap-1 cursor-pointer group" onClick={() => setNewKeyWizardStep(1)}>
+                         <div className="flex gap-1.5 items-center">
+                           <div className="w-2 h-1.5 bg-orange-900 group-hover:bg-orange-600 rounded-full transition-colors"></div>
+                           <div className="w-6 h-1.5 bg-orange-600 rounded-full"></div>
+                         </div>
+                         <div className="text-[10px] text-orange-600 uppercase font-bold tracking-widest group-hover:text-orange-500 transition-colors">Step 2 of 2</div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <button 
+                          onClick={() => setNewKeyWizardStep(1)}
+                          className="px-4 py-3 bg-black border border-orange-900 text-orange-500 hover:text-white hover:bg-orange-900 text-xs font-bold uppercase rounded transition-colors"
+                        >
+                          Back
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            if (!newKeyName.trim()) return;
+                            
+                            const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+                            const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                            const numbers = '0123456789';
+                            const symbols = '_-.!';
+    
+                            let chars = lowercase + uppercase;
+                            if (newKeyParams.numbers) chars += numbers;
+                            if (newKeyParams.symbols) chars += symbols;
+    
+                            let key = newKeyPrefix ? newKeyPrefix + '_' : '';
+                            const randomLength = newKeyPrefix ? newKeyLength - newKeyPrefix.length - 1 : newKeyLength;
+    
+                            let randomValues = new Uint32Array(Math.max(0, randomLength));
+                            if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(randomValues);
+    
+                            for (let i = 0; i < randomValues.length; i++) {
+                              key += chars.charAt(randomValues[i] % chars.length);
+                            }
+    
+                            const payload = { name: newKeyName.trim(), domain_id: newKeyDomainId || undefined, custom_key: key };
+                            const res = await fetch('/api/api-keys', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(payload)
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                              setGeneratedKey(data.api_key);
+                              setNewKeyName('');
+                              setNewKeyDomainId('');
+                              setNewKeyWizardStep(1);
+                              fetchApiKeys();
+                            } else {
+                              alert("Failed to generate key: " + data.error);
+                            }
+                          }} 
+                          disabled={!newKeyName.trim()}
+                          className="w-full sm:w-auto px-8 py-3 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:hover:bg-orange-600 text-white rounded uppercase text-sm font-bold flex items-center justify-center gap-2 transition-colors shrink-0 outline-none shadow-lg shadow-orange-900/50"
+                          title="Ctrl+G to Generate"
+                        >
+                          <Plus className="w-4 h-4" /> Create Key <span className="bg-black/30 px-1.5 py-0.5 rounded text-[10px] ml-2 font-mono border border-black/20">CTRL+G</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {generatedKey && (
+                  <div className="mt-6 p-4 border border-green-500/50 bg-green-900/20 rounded animate-in fade-in zoom-in-95 duration-200">
+                    <div className="text-green-400 font-bold mb-2 flex items-center justify-between">
+                       <span>Key generated successfully!</span>
+                       <button onClick={() => setGeneratedKey(null)} className="text-green-400 hover:text-white"><X className="w-4 h-4" /></button>
+                    </div>
+                    <div className="text-orange-200 mb-3 text-sm">Please copy this key and store it safely. It acts as a bearer token for the API.</div>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                       <code className="bg-black border border-green-900 text-green-300 px-4 py-3 rounded flex-1 font-mono text-sm break-all select-all">{generatedKey}</code>
+                       <button 
+                         onClick={() => {
+                           navigator.clipboard.writeText(generatedKey);
+                           setTimeout(() => setGeneratedKey(null), 1500);
+                         }} 
+                         className="px-4 py-3 bg-black border border-green-500/50 text-green-400 rounded hover:bg-green-500/20 transition-colors uppercase text-xs font-bold whitespace-nowrap self-stretch"
+                       >
+                         Copy to Clipboard
+                       </button>
+                    </div>
+                    <div className="text-red-400 mt-3 text-xs uppercase font-bold flex items-center gap-1"><ShieldAlert className="w-4 h-4" /> Warning: For security, this key will never be shown again!</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-sm font-bold text-orange-400 uppercase tracking-widest">Usage Statistics</h3>
+                <select 
+                  value={selectedApiKeyFilter}
+                  onChange={(e) => setSelectedApiKeyFilter(e.target.value)}
+                  className="bg-black border border-orange-900 text-orange-200 px-3 py-1.5 rounded text-sm focus:outline-none focus:border-orange-500"
+                >
+                  <option value="all">All API Keys</option>
+                  {apiKeys.map(k => (
+                    <option key={k.id} value={k.name}>{k.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-orange-950/20 border border-orange-900 rounded-lg p-6 flex flex-col items-center justify-center relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <Activity className="w-16 h-16 text-orange-500" />
+                  </div>
+                  <div className="text-orange-500 font-bold uppercase tracking-widest text-xs mb-2 z-10">Total Successful Calls (30d)</div>
+                  <div className="text-4xl text-white font-mono font-bold z-10">
+                    {apiKeyUsage
+                      .filter(curr => selectedApiKeyFilter === 'all' || curr.name === selectedApiKeyFilter)
+                      .reduce((acc, curr) => acc + curr.calls, 0)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-orange-950/20 border border-orange-900 rounded-lg overflow-hidden">
+                <table className="w-full text-left bg-black text-sm">
+                  <thead className="bg-orange-950 border-b-2 border-orange-800">
+                    <tr>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Name</th>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Prefix</th>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Scope</th>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Total Calls</th>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Created At</th>
+                      <th className="p-3 text-orange-500 font-bold tracking-widest uppercase text-xs text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apiKeys.map(key => (
+                      <tr key={key.id} className="border-b border-orange-900/50 hover:bg-orange-900/20 transition-colors group">
+                        <td className="p-3 font-medium text-orange-200">{key.name}</td>
+                        <td className="p-3 text-orange-400 font-mono text-xs">{key.prefix}...</td>
+                        <td className="p-3 text-orange-300 text-xs">{domains.find(d => d.id === key.domain_id)?.name || 'Global'}</td>
+                        <td className="p-3 text-orange-300 font-mono text-xs">{key.use_count || 0}</td>
+                        <td className="p-3 text-orange-400/70">{new Date(key.created_at).toLocaleString()}</td>
+                        <td className="p-3 text-right">
+                           <button onClick={(e) => {
+                             e.preventDefault();
+                             setConfirmDialog({
+                               isOpen: true,
+                               title: 'Revoke API Key',
+                               message: `Revoke API Key "${key.name}"? This action cannot be undone.`,
+                               onConfirm: async () => {
+                                 await fetch(`/api/api-keys/${key.id}`, { method: 'DELETE' });
+                                 fetchApiKeys();
+                               }
+                             });
+                           }} className="text-red-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Revoke Key">
+                             <Trash2 className="w-4 h-4 ml-auto" />
+                           </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {apiKeys.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-orange-700 italic">No API keys active</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {apiKeyUsage && apiKeyUsage.length > 0 && (
+                (() => {
+                  const filteredUsage = apiKeyUsage.filter(item => selectedApiKeyFilter === 'all' || item.name === selectedApiKeyFilter);
+                  const map = new Map<string, any>();
+                  const keysSet = new Set<string>();
+                  filteredUsage.forEach((item: any) => {
+                    if (!map.has(item.date)) map.set(item.date, { date: item.date });
+                    const entry = map.get(item.date);
+                    entry[item.name] = item.calls;
+                    keysSet.add(item.name);
+                  });
+                  const chartData = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+                  const colors = ['#ea580c', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+
+                  return (
+                    <div className="bg-orange-950/20 border border-orange-900 rounded-lg p-6 mt-6">
+                      <h3 className="text-orange-500 font-bold uppercase tracking-widest text-sm mb-6 flex items-center gap-2">
+                        <LineChart className="w-4 h-4" /> Daily Call Volume (30 Days) {selectedApiKeyFilter !== 'all' ? `- ${selectedApiKeyFilter}` : ''}
+                      </h3>
+                      <div className="h-[300px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#9a3412" opacity={0.3} />
+                            <XAxis 
+                              dataKey="date" 
+                              stroke="#fdba74" 
+                              tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}
+                              fontSize={12}
+                            />
+                            <YAxis stroke="#fdba74" fontSize={12} allowDecimals={false} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: '#431407', borderColor: '#ea580c', color: '#fff' }} 
+                            />
+                            <Legend wrapperStyle={{ fontSize: '12px', color: '#fdba74' }} />
+                            {Array.from(keysSet).map((keyName, i) => (
+                              <Bar key={keyName} dataKey={keyName} name={keyName} fill={colors[i % colors.length]} radius={[4, 4, 0, 0]} />
+                            ))}
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          )}
+
           {/* LOGS TAB */}
           {activeTab === 'logs' && (
             <div className="h-full flex flex-col animate-in fade-in duration-300">
@@ -1876,7 +2833,12 @@ function AdminDashboard() {
                      </div>
                      <div>
                        <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Model Architecture</label>
-                       <input value={newAgentForm.model} onChange={e => setNewAgentForm({...newAgentForm, model: e.target.value})} type="text" className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white" />
+                       <select value={newAgentForm.model} onChange={e => setNewAgentForm({...newAgentForm, model: e.target.value})} className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white">
+                         <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                         <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                         <option value="gpt-4o">GPT-4o (Legacy)</option>
+                         <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                       </select>
                      </div>
                      <div>
                        <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Agent Role</label>
@@ -1971,11 +2933,17 @@ function AdminDashboard() {
                             setViewingAgentVersionsId(ag.id);
                             fetchAgentVersions(ag.id);
                           }} className="text-orange-400 hover:text-white transition-colors uppercase text-xs font-bold border border-orange-800 rounded px-2 py-1 bg-black">Versioning</button>
-                          <button onClick={async () => {
-                            if (window.confirm('Eradicate neural network?')) {
-                              await fetch(`/api/agents/${ag.id}`, { method: 'DELETE' });
-                              fetchAll();
-                            }
+                          <button onClick={(e) => {
+                            e.preventDefault();
+                            setConfirmDialog({
+                              isOpen: true,
+                              title: 'Eradicate Neural Network',
+                              message: 'Are you absolutely sure you want to delete this agent? This cannot be undone.',
+                              onConfirm: async () => {
+                                await fetch(`/api/agents/${ag.id}`, { method: 'DELETE' });
+                                fetchAll();
+                              }
+                            });
                           }} className="text-red-600 hover:text-red-400 transition-colors" title="Decommission Agent"><Trash2 className="w-5 h-5"/></button>
                         </td>
                       </tr>
@@ -2035,6 +3003,31 @@ function AdminDashboard() {
           )}
 
         </main>
+
+        {/* Mobile Bottom Navbar */}
+        <div className="md:hidden shrink-0 w-full overflow-x-auto bg-black border-t border-orange-900 flex items-center z-40 pb-safe">
+          <div className="flex items-center px-2 py-2 gap-2 min-w-max">
+            {navItems.map(item => (
+              <button 
+                key={item.id} 
+                onClick={() => setActiveTab(item.id)} 
+                className={cn(
+                  "flex flex-col items-center justify-center min-w-[70px] w-[70px] h-14 rounded-lg transition-colors px-1", 
+                  activeTab === item.id 
+                    ? (item.isRed 
+                        ? "text-white bg-red-600 font-bold shadow-[0_0_15px_rgba(220,38,38,0.5)] border border-red-500" 
+                        : "text-white bg-orange-600 font-bold shadow-[0_0_15px_rgba(234,88,12,0.5)] border border-orange-500") 
+                    : (item.isRed 
+                        ? "text-red-700 hover:text-red-500 border border-transparent hover:bg-red-950/40" 
+                        : "text-orange-400 hover:text-orange-300 border border-transparent hover:bg-orange-950/40")
+                )}
+              > 
+                <item.icon className="w-5 h-5 mb-1 shrink-0" />
+                <span className="text-[10px] uppercase text-center leading-tight line-clamp-1 w-full truncate">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Global Auth Settings Modal */}
@@ -2195,16 +3188,22 @@ function AdminDashboard() {
                     <div className="text-xs text-orange-300 font-bold mb-1">Core Directives:</div>
                     <div className="bg-orange-950/50 p-2 rounded border border-orange-900 text-orange-400 whitespace-pre-wrap">{av.system_instruction}</div>
                     <div className="mt-4 flex justify-end">
-                      <button onClick={async () => {
-                        if (window.confirm("Rollback strictly overrides current logic matrix. Proceed?")) {
-                          await fetch(`/api/agents/${viewingAgentVersionsId}/versions`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ model: av.model, system_instruction: av.system_instruction })
-                          });
-                          fetchAgentVersions(viewingAgentVersionsId);
-                          fetchAll();
-                        }
+                      <button onClick={(e) => {
+                        e.preventDefault();
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Confirm Rollback',
+                          message: 'Rollback strictly overrides current logic matrix. Proceed?',
+                          onConfirm: async () => {
+                            await fetch(`/api/agents/${viewingAgentVersionsId}/versions`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ model: av.model, system_instruction: av.system_instruction })
+                            });
+                            fetchAgentVersions(viewingAgentVersionsId!);
+                            fetchAll();
+                          }
+                        });
                       }} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded-sm uppercase tracking-widest text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shadow-[0_0_10px_rgba(234,88,12,0.5)]"><Save className="w-3 h-3"/> Revert Core To This Build</button>
                     </div>
                   </div>
@@ -2224,24 +3223,35 @@ function AdminDashboard() {
         </div>
       )}
 
-      {/* Mobile Bottom Navbar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 max-w-[100vw] overflow-x-auto bg-black border-t border-orange-900 flex items-center z-40 pb-safe">
-         <div className="flex items-center px-2 py-2 gap-2 min-w-max">
-           {navItems.map(item => (
+      {/* GLOBAL CONFIRMATION DIALOG */}
+      {confirmDialog?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-orange-950 border border-orange-500 shadow-2xl shadow-orange-900/50 rounded-lg max-w-md w-full p-6 animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+              <ShieldAlert className="w-6 h-6 text-orange-500" />
+              {confirmDialog.title}
+            </h3>
+            <p className="text-orange-200 mb-6">{confirmDialog.message}</p>
+            <div className="flex justify-end gap-3">
               <button 
-                key={item.id} 
-                onClick={() => setActiveTab(item.id)} 
-                className={cn(
-                  "flex flex-col items-center justify-center min-w-[70px] w-[70px] h-14 rounded-lg transition-colors px-1", 
-                  activeTab === item.id ? (item.isRed ? "text-red-500 bg-red-950/30 font-bold" : "text-orange-500 bg-orange-900/30 font-bold") : (item.isRed ? "text-red-700 hover:text-red-500" : "text-orange-400 hover:text-orange-300")
-                )}
-              > 
-                <item.icon className="w-5 h-5 mb-1 shrink-0" />
-                <span className="text-[10px] uppercase text-center leading-tight line-clamp-1 w-full truncate">{item.label}</span>
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-2 border border-orange-800 text-orange-300 hover:text-white hover:bg-orange-900 rounded font-bold uppercase tracking-widest text-sm transition-colors"
+              >
+                Cancel
               </button>
-           ))}
-         </div>
-      </div>
+              <button 
+                onClick={() => {
+                  confirmDialog.onConfirm();
+                  setConfirmDialog(null);
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-bold shadow-lg shadow-red-900/50 uppercase tracking-widest text-sm transition-colors"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
