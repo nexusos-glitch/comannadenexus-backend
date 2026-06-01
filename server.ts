@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import os from 'os';
@@ -8,11 +7,10 @@ import { EventEmitter } from 'events';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // Initialize SQLite database
-const db = new Database('data.db', { verbose: console.log });
+const isProduction = process.env.NODE_ENV === "production" || process.argv[1]?.endsWith('.cjs');
+const dbPath = isProduction ? '/tmp/data.db' : 'data.db';
+const db = new Database(dbPath, { verbose: console.log });
 db.pragma('journal_mode = WAL');
 
 const logEmitter = new EventEmitter();
@@ -23,146 +21,193 @@ function systemLog(level: string, source: string, message: string) {
   console.log(`[${source}] ${level}: ${message}`);
 }
 
+function verifySchemaVersion(expectedVersion: number) {
+  try {
+    const versionRow = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
+    const currentVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
+    
+    if (currentVersion !== expectedVersion) {
+      const errorMsg = `CRITICAL ERROR: Database schema version mismatch. Expected version ${expectedVersion}, but found version ${currentVersion}. Please run migrations.`;
+      systemLog('ERROR', 'DB', errorMsg);
+      console.error(errorMsg);
+      process.exit(1); // Prevent startup
+    } else {
+      systemLog('INFO', 'DB', `Schema version ${currentVersion} verified successfully.`);
+    }
+  } catch (error) {
+    const errorMsg = "CRITICAL ERROR: schema_meta table is missing. Database is not initialized properly.";
+    systemLog('ERROR', 'DB', errorMsg);
+    console.error(errorMsg);
+    process.exit(1); // Prevent startup
+  }
+}
+
 // Define database schema
 function initSchema() {
-  systemLog('INFO', 'DB', 'Initializing database schema');
+  systemLog('INFO', 'DB', 'Initializing database schema metadata');
+  
   db.exec(`
-    CREATE TABLE IF NOT EXISTS domains (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS components (
-      id TEXT PRIMARY KEY,
-      domain_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      visible INTEGER DEFAULT 1,
-      config JSON NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      role TEXT DEFAULT 'user',
-      is_banned INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_login DATETIME
-    );
-
-    CREATE TABLE IF NOT EXISTS ads (
-      id TEXT PRIMARY KEY,
-      domain_id TEXT NOT NULL,
-      campaign_name TEXT NOT NULL,
-      active INTEGER DEFAULT 1,
-      config JSON NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS visits (
-      id TEXT PRIMARY KEY,
-      domain_id TEXT NOT NULL,
-      ip_address TEXT,
-      country TEXT,
-      user_agent TEXT,
-      referrer TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
+    CREATE TABLE IF NOT EXISTS schema_meta (
       key TEXT PRIMARY KEY,
-      value JSON NOT NULL,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      model TEXT DEFAULT 'gpt-4o',
-      system_instruction TEXT NOT NULL,
-      role TEXT DEFAULT 'operator',
-      api_key TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_versions (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL,
-      model TEXT NOT NULL,
-      system_instruction TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (agent_id) REFERENCES agents (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS members (
-      id TEXT PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      source TEXT,
-      campaign_id TEXT,
-      user_agent TEXT,
-      ip_address TEXT,
-      intent_score INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS api_keys (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      key_hash TEXT NOT NULL,
-      prefix TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_used DATETIME,
-      use_count INTEGER DEFAULT 0,
-      domain_id TEXT,
-      FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS api_key_usage (
-      id TEXT PRIMARY KEY,
-      api_key_id TEXT NOT NULL,
-      usage_date DATE NOT NULL,
-      calls INTEGER DEFAULT 1,
-      UNIQUE(api_key_id, usage_date),
-      FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS api_logs (
-      id TEXT PRIMARY KEY,
-      endpoint TEXT NOT NULL,
-      method TEXT NOT NULL,
-      status_code INTEGER,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      ip_address TEXT,
-      duration_ms INTEGER
+      value TEXT NOT NULL
     );
   `);
 
-  try {
-    db.prepare('ALTER TABLE agents ADD COLUMN role TEXT DEFAULT "operator"').run();
-  } catch (e) {
-    // Column might already exist
+  const versionRow = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
+  let currentVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
+
+  systemLog('INFO', 'DB', `Current schema version: ${currentVersion}`);
+
+  // Migration 1: Initial schema
+  if (currentVersion < 1) {
+    systemLog('INFO', 'DB', 'Running migration 1 (Initial schema)');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS domains (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS components (
+        id TEXT PRIMARY KEY,
+        domain_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        visible INTEGER DEFAULT 1,
+        config JSON NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        role TEXT DEFAULT 'user',
+        is_banned INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_login DATETIME
+      );
+
+      CREATE TABLE IF NOT EXISTS ads (
+        id TEXT PRIMARY KEY,
+        domain_id TEXT NOT NULL,
+        campaign_name TEXT NOT NULL,
+        active INTEGER DEFAULT 1,
+        config JSON NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS visits (
+        id TEXT PRIMARY KEY,
+        domain_id TEXT NOT NULL,
+        ip_address TEXT,
+        country TEXT,
+        user_agent TEXT,
+        referrer TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value JSON NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        model TEXT DEFAULT 'gpt-4o',
+        system_instruction TEXT NOT NULL,
+        role TEXT DEFAULT 'operator',
+        api_key TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_versions (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        system_instruction TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agent_id) REFERENCES agents (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS members (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        source TEXT,
+        campaign_id TEXT,
+        user_agent TEXT,
+        ip_address TEXT,
+        intent_score INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        prefix TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_used DATETIME,
+        use_count INTEGER DEFAULT 0,
+        domain_id TEXT,
+        FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
+      );
+    `);
+    
+    // Seed initial data... (moving seed data logically after tables are available)
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '1')").run();
+    currentVersion = 1;
   }
 
-  try {
-    db.prepare('ALTER TABLE api_keys ADD COLUMN use_count INTEGER DEFAULT 0').run();
-  } catch (e) {
-    // Column might already exist
+  // Migration 2: api_key_usage and api_logs tables
+  if (currentVersion < 2) {
+    systemLog('INFO', 'DB', 'Running migration 2 (api keys usage and logs)');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_key_usage (
+        id TEXT PRIMARY KEY,
+        api_key_id TEXT NOT NULL,
+        usage_date DATE NOT NULL,
+        calls INTEGER DEFAULT 1,
+        UNIQUE(api_key_id, usage_date),
+        FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS api_logs (
+        id TEXT PRIMARY KEY,
+        endpoint TEXT NOT NULL,
+        method TEXT NOT NULL,
+        status_code INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ip_address TEXT,
+        duration_ms INTEGER
+      );
+    `);
+    
+    // Make sure we apply any old column additions here too to keep state uniform
+    try {
+      db.prepare('ALTER TABLE agents ADD COLUMN role TEXT DEFAULT "operator"').run();
+    } catch (e) {}
+
+    try {
+      db.prepare('ALTER TABLE api_keys ADD COLUMN use_count INTEGER DEFAULT 0').run();
+    } catch (e) {}
+
+    try {
+      db.prepare('ALTER TABLE agents ADD COLUMN api_key TEXT').run();
+    } catch (e) {}
+
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '2')").run();
+    currentVersion = 2;
   }
 
-  try {
-    db.prepare('ALTER TABLE agents ADD COLUMN api_key TEXT').run();
-  } catch (e) {
-    // Column might already exist
-  }
-
+  // Check if we need to seed initial data
   const count = db.prepare('SELECT count(*) as count FROM domains').get() as { count: number };
   if (count.count === 0) {
     systemLog('INFO', 'DB', 'Seeding initial data');
@@ -196,9 +241,17 @@ function initSchema() {
       systemLog('ERROR', 'DB', 'Seed failed: ' + err.message);
     }
   }
+
+  // Final verification to satisfy the safety check
+  verifySchemaVersion(2);
 }
 
-initSchema();
+try {
+  initSchema();
+} catch (error) {
+  console.error("Failed to initialize database schema. Server will not start.", error);
+  process.exit(1);
+}
 
 async function startServer() {
   const app = express();
@@ -1042,10 +1095,26 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-    app.use(vite.middlewares);
+  // Vite middleware for development or fallback to dist in production
+  const isProduction = process.env.NODE_ENV === "production" || process.argv[1]?.endsWith('.cjs');
+
+  if (!isProduction) {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({ 
+        server: { 
+          middlewareMode: true,
+          hmr: { port: 24678, strictPort: false }
+        }, 
+        appType: "spa" 
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.warn("Vite not found, falling back to static dist");
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    }
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
