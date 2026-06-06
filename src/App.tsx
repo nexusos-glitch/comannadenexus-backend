@@ -9,7 +9,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { 
   Server, Settings, Layout, Layers, Plus, ExternalLink, 
   Trash2, Edit3, Save, X, Activity, Database, Terminal, ShieldAlert,
-  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github, Key, AlertTriangle, TrendingUp, ChevronRight, Sun, Moon
+  Users, UserX, UserCheck, Megaphone, LineChart, Globe, Lock, ShieldBan, LockKeyhole, Menu, Download, Search, Github, Key, AlertTriangle, TrendingUp, ChevronRight, Sun, Moon, Play, CheckCircle
 } from 'lucide-react';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -18,9 +18,65 @@ import { ComposableMap, Geographies, Geography, Sphere, Graticule } from 'react-
 import { scaleLinear } from 'd3-scale';
 import { Tooltip as ReactTooltip } from 'react-tooltip';
 import cnLogo from './assets/images/command_nexus_logo_1779369627626.png';
+import { OllamaChat } from './components/OllamaChat';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+export function generateAndDownloadSDK(doc: any) {
+  const functionNamePart = doc.path.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').replace(/_([a-z])/g, (g: any) => g[1].toUpperCase());
+  const hasBody = doc.method === 'POST' || doc.method === 'PUT' || doc.method === 'PATCH';
+  
+  let payloadParam = '';
+  let payloadComment = '';
+  if (hasBody && doc.schema && doc.schema !== 'None') {
+    payloadParam = 'payload: any, ';
+    payloadComment = `\n * @param payload - Expected schema: ${doc.schema.replace(/\n/g, ' ')}`;
+  } else if (hasBody) {
+    payloadParam = 'payload: any, ';
+    payloadComment = `\n * @param payload - Request body`;
+  }
+
+  const code = `/**
+ * Call ${doc.method} ${doc.path}${payloadComment}
+ * @param baseUrl - The base URL of the API
+ * @param apiKey - Optional API key
+ */
+export async function ${doc.method.toLowerCase()}${functionNamePart.charAt(0).toUpperCase() + functionNamePart.slice(1)}(${payloadParam}baseUrl: string, apiKey?: string) {
+  const url = new URL('${doc.path}', baseUrl);
+  
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  
+  if (apiKey) {
+    headers['Authorization'] = \`Bearer \${apiKey}\`;
+  }
+
+  const response = await fetch(url.toString(), {
+    method: '${doc.method}',
+    headers,${hasBody ? `\n    body: JSON.stringify(payload),` : ''}
+  });
+
+  if (!response.ok) {
+    throw new Error(\`API request failed with status: \${response.status}\`);
+  }
+
+  return response.json();
+}
+`;
+
+  const blob = new Blob([code], { type: 'application/typescript' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const fileNamePart = doc.path.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  a.download = `${doc.method.toLowerCase()}_${fileNamePart}.ts`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // --- DYNAMIC RENDERER ---
@@ -188,7 +244,7 @@ function DynamicFrontend() {
         if (page === 'campaign') {
            fetch('/api/ads').then(r => r.json()).then(allAds => {
                setAds(allAds.filter((a: any) => a.domain_name === d.domain && a.active));
-           });
+           }).catch(() => {});
         }
       })
       .catch(e => setError(e.message))
@@ -525,8 +581,11 @@ function AdminDashboard() {
     systemsOnline: true,
     accessTokens: true,
     activeCampaigns: true,
-    networkStress: true
+    networkStress: true,
+    apiHealth: true
   });
+  
+  const [apiHealthStats, setApiHealthStats] = useState({ uptime: 0, latencyMs: 0, status: 'UNKNOWN' });
   
   const [domains, setDomains] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
@@ -534,6 +593,20 @@ function AdminDashboard() {
   const [members, setMembers] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [visits, setVisits] = useState<any[]>([]);
+  const [growthTriggers, setGrowthTriggers] = useState<any[]>([]);
+  const [appSecrets, setAppSecrets] = useState<any[]>([]);
+  const [apiDocs, setApiDocs] = useState<any[]>([]);
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  
+  const [editingTriggerId, setEditingTriggerId] = useState<string | null>(null);
+  const [editTriggerForm, setEditTriggerForm] = useState({
+    domain_id: '',
+    threshold: 100,
+    configJson: '{\n  "title": "Welcome User",\n  "subtitle": "Special Offer Below"\n}'
+  });
+  
+  const [editingSecretId, setEditingSecretId] = useState<string | null>(null);
+  const [editSecretForm, setEditSecretForm] = useState({ name: '', value: '' });
   const [trafficSearch, setTrafficSearch] = useState('');
   const [domainSearch, setDomainSearch] = useState('');
   const [alertSearch, setAlertSearch] = useState('');
@@ -632,12 +705,20 @@ function AdminDashboard() {
   const [newKeyPrefix, setNewKeyPrefix] = useState('cnx');
   const [newKeyLength, setNewKeyLength] = useState(32);
   const [newKeyParams, setNewKeyParams] = useState({ numbers: true, symbols: false });
+  const [newKeyRateLimit, setNewKeyRateLimit] = useState(1000);
   const [newKeyWizardStep, setNewKeyWizardStep] = useState<1 | 2>(1);
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+  
+  const [editingApiKeyId, setEditingApiKeyId] = useState<string | null>(null);
+  const [editingApiKeyForm, setEditingApiKeyForm] = useState({ name: '', domain_id: '', rate_limit_per_hour: 1000 });
   
   // Test Key State
   const [testKeyInput, setTestKeyInput] = useState('');
   const [testKeyResult, setTestKeyResult] = useState<{status: 'idle' | 'loading' | 'success' | 'error', message: string, data?: any}>({ status: 'idle', message: '' });
+
+  // Schema docs state
+  const [editingSchemaDoc, setEditingSchemaDoc] = useState<{method: string, path: string, schema: string} | null>(null);
+  const [editingSchemaText, setEditingSchemaText] = useState("");
 
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
 
@@ -645,11 +726,11 @@ function AdminDashboard() {
     try {
       const res = await fetch('/api/api-keys');
       const data = await res.json();
-      setApiKeys(data);
+      setApiKeys(Array.isArray(data) ? data : []);
       
       const usageRes = await fetch('/api/api-keys/usage');
       const usageData = await usageRes.json();
-      setApiKeyUsage(usageData);
+      setApiKeyUsage(Array.isArray(usageData) ? usageData : []);
     } catch (e) {
       console.error('Failed to fetch API keys:', e);
     }
@@ -816,14 +897,25 @@ function AdminDashboard() {
 
 
   const fetchAll = async () => {
-    const [dRes, cRes, uRes, mRes, aRes, vRes, agRes] = await Promise.all([
-      fetch('/api/domains').then(r => r.json()),
-      fetch('/api/components').then(r => r.json()),
-      fetch('/api/users').then(r => r.json()),
-      fetch('/api/members').then(r => r.json()),
-      fetch('/api/ads').then(r => r.json()),
-      fetch('/api/visits').then(r => r.json()),
-      fetch('/api/agents').then(r => r.json())
+    const safeJson = async (r: Response) => {
+      try {
+        const data = await r.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    };
+    const [dRes, cRes, uRes, mRes, aRes, vRes, agRes, gtRes, asRes, adRes] = await Promise.all([
+      fetch('/api/domains').then(safeJson).catch(() => []),
+      fetch('/api/components').then(safeJson).catch(() => []),
+      fetch('/api/users').then(safeJson).catch(() => []),
+      fetch('/api/members').then(safeJson).catch(() => []),
+      fetch('/api/ads').then(safeJson).catch(() => []),
+      fetch('/api/visits').then(safeJson).catch(() => []),
+      fetch('/api/agents').then(safeJson).catch(() => []),
+      fetch('/api/growth-triggers').then(safeJson).catch(() => []),
+      fetch('/api/app-secrets').then(safeJson).catch(() => []),
+      fetch('/api/docs').then(safeJson).catch(() => [])
     ]);
     setDomains(dRes);
     setComponents(cRes);
@@ -832,6 +924,9 @@ function AdminDashboard() {
     setAds(aRes);
     setVisits(vRes);
     setAgents(agRes);
+    setGrowthTriggers(gtRes);
+    setAppSecrets(asRes);
+    setApiDocs(adRes);
     setSelectedAgentId(prev => (!prev && agRes.length > 0) ? agRes[0].id : prev);
   };
 
@@ -1029,6 +1124,12 @@ function AdminDashboard() {
                  return [...prev, log.data];
               }
            });
+        } else if (log.type === 'component_added') {
+           setComponents(prev => [...prev, log.data]);
+        } else if (log.type === 'component_updated') {
+           setComponents(prev => prev.map(c => c.id === log.data.id ? { ...c, ...log.data } : c));
+        } else if (log.type === 'component_deleted') {
+           setComponents(prev => prev.filter(c => c.id !== log.data.id));
         }
       };
       return () => sse.close();
@@ -1047,6 +1148,34 @@ function AdminDashboard() {
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab === 'overview' && widgetConfig.apiHealth) {
+      const measureHealth = async () => {
+        const start = performance.now();
+        try {
+          const res = await fetch('/api/health');
+          const end = performance.now();
+          if (res.ok) {
+             const data = await res.json();
+             setApiHealthStats({
+               uptime: data.uptime || 0,
+               latencyMs: Math.round(end - start),
+               status: 'ONLINE'
+             });
+          } else {
+             setApiHealthStats(prev => ({ ...prev, status: 'ERROR' }));
+          }
+        } catch (err) {
+          setApiHealthStats(prev => ({ ...prev, status: 'OFFLINE' }));
+        }
+      };
+      
+      measureHealth();
+      const iv = setInterval(measureHealth, 2000);
+      return () => clearInterval(iv);
+    }
+  }, [activeTab, widgetConfig.apiHealth]);
+
+  useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
@@ -1062,7 +1191,9 @@ function AdminDashboard() {
     { id: 'agents_management', icon: Settings, label: 'Agents Matrix' },
     { id: 'apikeys', icon: Key, label: 'API Access' },
     { id: 'apiactivity', icon: Activity, label: 'API Activity' },
-    { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true }
+    { id: 'apidocs', icon: Layers, label: 'API Documentation' },
+    { id: 'agent', icon: ShieldAlert, label: 'AI Operations Agent', isRed: true },
+    { id: 'ollama_agent', icon: Terminal, label: 'Local Agent', isRed: true }
   ];
 
   console.log("NAV_ITEMS_DEBUG:", navItems);
@@ -1074,12 +1205,14 @@ function AdminDashboard() {
       {isMobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex">
           <div className="w-64 bg-orange-950 border-r border-orange-900 flex flex-col h-full relative">
-              <div className="p-4 border-b border-orange-900 font-bold flex items-center justify-between tracking-widest text-orange-500">
-                <div className="flex items-center gap-2">
-                  <img src={cnLogo} alt="Logo" className="w-6 h-6 rounded-sm" />
-                  CMD_CTRL
+              <div className="p-4 border-b border-orange-900 font-bold flex flex-col items-start gap-2 tracking-widest text-orange-500">
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    <img src={cnLogo} alt="Logo" className="w-32 h-32 mix-blend-screen" />
+                    <span className="text-4xl tracking-[0.25em] ml-2">CMD_CTRL</span>
+                  </div>
+                  <button onClick={() => setIsMobileMenuOpen(false)} className="text-orange-500"><X className="w-6 h-6"/></button>
                 </div>
-                <button onClick={() => setIsMobileMenuOpen(false)} className="text-orange-500"><X className="w-6 h-6"/></button>
               </div>
              <div className="flex-1 overflow-y-auto py-4">
                <nav className="space-y-1 px-2">
@@ -1097,9 +1230,9 @@ function AdminDashboard() {
 
       {/* Desktop Sidebar */}
       <div className="hidden md:flex w-64 bg-orange-950 border-r border-orange-900 flex-col shrink-0">
-        <div className="p-4 border-b border-orange-900 font-bold flex items-center gap-2 tracking-widest text-orange-500">
-          <img src={cnLogo} alt="Logo" className="w-6 h-6 rounded-sm" />
-          CMD_CTRL
+        <div className="p-4 py-6 border-b border-orange-900 font-bold flex flex-col items-center justify-center gap-4 tracking-widest text-orange-500 text-center">
+          <img src={cnLogo} alt="Logo" className="w-32 h-32 mix-blend-screen" />
+          <span className="text-4xl tracking-[0.25em] ml-2">CMD_CTRL</span>
         </div>
         <div className="flex-1 overflow-y-auto py-4">
           <nav className="space-y-1 px-2">
@@ -1219,6 +1352,10 @@ function AdminDashboard() {
                              <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.networkStress} onChange={e => setWidgetConfig(prev => ({ ...prev, networkStress: e.target.checked }))} />
                              Network Stress
                            </label>
+                           <label className="flex items-center gap-3 text-orange-200 text-sm cursor-pointer hover:text-white transition-colors">
+                             <input type="checkbox" className="accent-orange-500 rounded bg-orange-950 border-orange-800" checked={widgetConfig.apiHealth} onChange={e => setWidgetConfig(prev => ({ ...prev, apiHealth: e.target.checked }))} />
+                             API Health
+                           </label>
                          </div>
                        </div>
                      )}
@@ -1228,6 +1365,37 @@ function AdminDashboard() {
                
                {/* TOP KPIS */}
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                 {widgetConfig.apiHealth && (
+                   <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg shadow-lg shadow-orange-900/20 md:col-span-4 flex flex-col md:flex-row items-center justify-between">
+                     <div className="flex flex-col items-start gap-1">
+                       <div className="text-orange-400 font-bold uppercase text-xs tracking-widest flex items-center gap-2">
+                         <Server className="w-4 h-4" /> API Gateway Health
+                       </div>
+                       <div className="text-orange-200/60 text-xs">Real-time status</div>
+                     </div>
+                     <div className="flex items-center gap-8 mt-4 md:mt-0">
+                       <div className="text-right">
+                         <div className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-1">Status</div>
+                         <div className={cn(
+                           "font-mono font-bold text-lg flex items-center gap-2",
+                           apiHealthStats.status === 'ONLINE' ? 'text-green-500' : 
+                           apiHealthStats.status === 'ERROR' ? 'text-red-500' : 'text-orange-500'
+                         )}>
+                           <div className={cn("w-2 h-2 rounded-full", apiHealthStats.status === 'ONLINE' ? 'bg-green-500 animate-pulse' : 'bg-red-500 animate-pulse')} />
+                           {apiHealthStats.status}
+                         </div>
+                       </div>
+                       <div className="text-right">
+                         <div className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-1">Latency</div>
+                         <div className="text-white font-mono text-lg">{apiHealthStats.latencyMs} <span className="text-orange-400 text-xs">ms</span></div>
+                       </div>
+                       <div className="text-right">
+                         <div className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-1">Uptime</div>
+                         <div className="text-white font-mono text-lg">{(apiHealthStats.uptime / 3600).toFixed(2)} <span className="text-orange-400 text-xs">hrs</span></div>
+                       </div>
+                     </div>
+                   </div>
+                 )}
                  {widgetConfig.systemsOnline && (
                    <div className="bg-orange-950 border border-orange-800 p-6 rounded-lg text-center shadow-lg shadow-orange-900/20">
                      <div className="text-orange-400 font-bold uppercase text-xs tracking-widest mb-2">Systems Online</div>
@@ -2291,23 +2459,24 @@ function AdminDashboard() {
 
           {/* CONFIG TAB */}
           {activeTab === 'config' && (
-            <div className="animate-in fade-in duration-300">
-              <div className="flex items-center justify-between mb-4">
-                 <h2 className="text-lg font-bold text-white">Component Registry (JSONB store)</h2>
-                 <button onClick={() => {
-                   setEditingId('new');
-                   setEditForm({
-                     domain_id: domains[0]?.id || '',
-                     type: 'marketing-banner',
-                     visible: true,
-                     configJson: '{\n  "text": "New Banner"\n}'
-                   });
-                 }} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
-                   <Plus className="w-4 h-4"/> Inject Payload
-                 </button>
-              </div>
-              <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
-                <table className="min-w-full divide-y divide-orange-900">
+            <div className="animate-in fade-in duration-300 space-y-8">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                   <h2 className="text-xl font-bold text-white border-b-2 border-orange-600 inline-block pb-1 flex items-center gap-2"><Layers className="w-5 h-5 text-orange-500" /> Component Registry Engine</h2>
+                   <button onClick={() => {
+                     setEditingId('new');
+                     setEditForm({
+                       domain_id: domains[0]?.id || '',
+                       type: 'marketing-banner',
+                       visible: true,
+                       configJson: '{\n  "title": "Welcome",\n  "subtitle": "Join us today",\n  "color": "#ea580c"\n}'
+                     });
+                   }} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
+                     <Plus className="w-4 h-4"/> Inject Payload
+                   </button>
+                </div>
+                <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                  <table className="min-w-full divide-y divide-orange-900">
                   <thead className="bg-orange-950">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Target Domain</th>
@@ -2420,6 +2589,248 @@ function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
+            </div>
+            
+              {/* EXTERNAL API SECRETS */}
+              <div className="mt-8 space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                   <h2 className="text-xl font-bold text-white border-b-2 border-orange-600 inline-block pb-1 flex items-center gap-2">
+                     <LockKeyhole className="w-5 h-5 text-orange-500" /> App Secrets & Integrations
+                   </h2>
+                   <button onClick={() => {
+                     setEditingSecretId('new');
+                     setEditSecretForm({ name: '', value: '' });
+                   }} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
+                     <Plus className="w-4 h-4"/> Add Secret
+                   </button>
+                </div>
+                <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                  <table className="min-w-full divide-y divide-orange-900">
+                  <thead className="bg-orange-950">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Name (e.g. YOUTUBE_API_KEY)</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Value</th>
+                      <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-orange-900 text-sm">
+                    {editingSecretId === 'new' && (
+                      <tr className="bg-orange-950/50">
+                        <td className="px-6 py-4 whitespace-nowrap text-white">
+                           <input type="text" className="w-full bg-black border border-orange-600 text-white p-2 rounded max-w-sm uppercase font-mono" placeholder="OLLAMA_HOST" value={editSecretForm.name} onChange={e => setEditSecretForm({...editSecretForm, name: e.target.value})} />
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-white">
+                           <div className="flex items-center gap-2 max-w-lg">
+                             <input type={showSecrets['new'] ? "text" : "password"} className="w-full bg-black border border-orange-600 text-white p-2 rounded font-mono" placeholder="Secret value..." value={editSecretForm.value} onChange={e => setEditSecretForm({...editSecretForm, value: e.target.value})} />
+                             <button onClick={() => setShowSecrets({...showSecrets, 'new': !showSecrets['new']})} className="text-orange-500 hover:text-orange-300">
+                               {showSecrets['new'] ? <Settings className="w-5 h-5"/> : <Lock className="w-5 h-5"/>}
+                             </button>
+                           </div>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                           <div className="flex items-center justify-end gap-3">
+                              <button onClick={() => setEditingSecretId(null)} className="text-orange-500 hover:text-white bg-black border border-orange-800 px-3 py-1 rounded flex items-center gap-1 uppercase text-xs font-bold"><X className="w-3 h-3"/> Cancel</button>
+                              <button onClick={async () => {
+                                try {
+                                  if (!editSecretForm.name || !editSecretForm.value) return;
+                                  await fetch('/api/app-secrets', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: editSecretForm.name, value: editSecretForm.value })
+                                  });
+                                  setEditingSecretId(null);
+                                  fetchAll();
+                                } catch (e) {
+                                  console.error("Failed to save secret");
+                                }
+                              }} className="text-white hover:bg-green-600 bg-green-700 px-3 py-1 rounded flex items-center gap-1 uppercase text-xs font-bold shadow-lg shadow-green-900/50"><Save className="w-3 h-3"/> Save</button>
+                           </div>
+                        </td>
+                      </tr>
+                    )}
+                    {appSecrets.map(s => (
+                      <tr key={s.id} className="hover:bg-orange-950/30">
+                        <td className="px-6 py-4 whitespace-nowrap font-mono font-bold text-orange-200">
+                          {s.name}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-white">
+                          <div className="flex items-center gap-2 max-w-lg">
+                            <input 
+                              type={showSecrets[s.id] ? "text" : "password"} 
+                              readOnly 
+                              value={s.value} 
+                              className="w-full bg-black/50 border border-orange-900/50 text-orange-400 p-2 rounded font-mono text-sm" 
+                            />
+                            <button onClick={() => setShowSecrets({...showSecrets, [s.id]: !showSecrets[s.id]})} className="text-orange-600 hover:text-orange-400 p-1">
+                               {showSecrets[s.id] ? <Settings className="w-4 h-4"/> : <Lock className="w-4 h-4"/>}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                           <button onClick={async () => {
+                             if (confirm('Delete this secret?')) {
+                               await fetch(`/api/app-secrets/${s.id}`, { method: 'DELETE' });
+                               fetchAll();
+                             }
+                           }} className="text-red-500 hover:text-white transition"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                    {appSecrets.length === 0 && editingSecretId !== 'new' && (
+                       <tr><td colSpan={3} className="text-orange-700 p-6 text-center italic font-bold">No application secrets configured.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                </div>
+              </div>
+            
+              {/* GROWTH BOT TRIGGERS UI */}
+              <div className="mt-8 space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                   <h2 className="text-xl font-bold text-white border-b-2 border-orange-600 inline-block pb-1 flex items-center gap-2">
+                     <TrendingUp className="w-5 h-5 text-orange-500" /> Growth Bot Triggers
+                   </h2>
+                   <button onClick={() => {
+                     setEditingTriggerId('new');
+                     setEditTriggerForm({
+                       domain_id: domains[0]?.id || '',
+                       threshold: 100,
+                       configJson: '{\n  "title": "Welcome User",\n  "subtitle": "Special Offer Below"\n}'
+                     });
+                   }} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
+                     <Plus className="w-4 h-4"/> Add Trigger
+                   </button>
+                </div>
+                <div className="border border-orange-900 rounded-lg overflow-hidden bg-black ring-1 ring-orange-900">
+                  <table className="min-w-full divide-y divide-orange-900">
+                  <thead className="bg-orange-950">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Domain</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Traffic Threshold</th>
+                      <th className="px-6 py-3 text-left text-xs font-bold text-orange-200 uppercase tracking-widest">Component Config</th>
+                      <th className="px-6 py-3 text-right text-xs font-bold text-orange-200 uppercase tracking-widest">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-orange-900 text-sm">
+                    {editingTriggerId === 'new' && (
+                      <tr className="bg-orange-950/50">
+                        <td className="px-6 py-4 whitespace-nowrap text-white">
+                           <select 
+                             className="w-full bg-black border border-orange-600 text-white p-1 rounded font-bold"
+                             value={editTriggerForm.domain_id}
+                             onChange={e => setEditTriggerForm({...editTriggerForm, domain_id: e.target.value})}
+                           >
+                             <option value="">Select Domain...</option>
+                             {domains.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                           </select>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-white">
+                           <input type="number" min="1" className="w-full bg-black border border-orange-600 text-white p-1 rounded max-w-[100px] text-right font-mono text-lg font-bold text-red-500" value={editTriggerForm.threshold} onChange={e => setEditTriggerForm({...editTriggerForm, threshold: parseInt(e.target.value) || 0})} />
+                        </td>
+                        <td className="px-6 py-4">
+                           <textarea className="w-full bg-black border border-orange-600 text-orange-400 p-2 rounded font-mono text-xs focus:ring-2 focus:ring-red-500 focus:outline-none" rows={4} value={editTriggerForm.configJson} onChange={e => setEditTriggerForm({...editTriggerForm, configJson: e.target.value})} />
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                           <div className="flex items-center justify-end gap-3">
+                              <button onClick={() => setEditingTriggerId(null)} className="text-orange-500 hover:text-white bg-black border border-orange-800 px-3 py-1 rounded flex items-center gap-1 uppercase text-xs font-bold"><X className="w-3 h-3"/> Cancel</button>
+                              <button onClick={async () => {
+                                try {
+                                  if (!editTriggerForm.domain_id) return;
+                                  const config = JSON.parse(editTriggerForm.configJson);
+                                  await fetch('/api/growth-triggers', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ id: 'gt' + Date.now(), domain_id: editTriggerForm.domain_id, threshold: editTriggerForm.threshold, config })
+                                  });
+                                  setEditingTriggerId(null);
+                                  fetchAll();
+                                } catch (e) {
+                                  console.error("Invalid JSON!");
+                                }
+                              }} className="text-white hover:bg-green-600 bg-green-700 px-3 py-1 rounded flex items-center gap-1 uppercase text-xs font-bold shadow-lg shadow-green-900/50"><Save className="w-3 h-3"/> Save</button>
+                           </div>
+                        </td>
+                      </tr>
+                    )}
+                    {growthTriggers.map(t => (
+                      <tr key={t.id} className="hover:bg-orange-950/30">
+                        <td className="px-6 py-4 whitespace-nowrap font-bold text-white">
+                          {t.domain_name}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap flex items-center gap-2">
+                           <Activity className="w-4 h-4 text-red-500" /> <span className="font-mono text-red-400 font-black text-xl">{t.threshold.toLocaleString()}</span> limits
+                        </td>
+                        <td className="px-6 py-4">
+                          <pre className="text-xs font-mono bg-black border border-orange-900 p-3 rounded text-orange-400 max-h-32 overflow-y-auto">
+                            {JSON.stringify(t.config, null, 2)}
+                          </pre>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                           <button onClick={async () => {
+                             if (confirm('Delete this trigger?')) {
+                               await fetch(`/api/growth-triggers/${t.id}`, { method: 'DELETE' });
+                               fetchAll();
+                             }
+                           }} className="text-red-500 hover:text-white transition"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                    {growthTriggers.length === 0 && editingTriggerId !== 'new' && (
+                       <tr><td colSpan={4} className="text-orange-700 p-6 text-center italic font-bold">No growth bot triggers configured.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                </div>
+              </div>
+
+              {/* REAL-TIME COMPONENT PREVIEW */}
+              <div className="border border-orange-600 rounded-lg bg-orange-950/20 p-6 flex flex-col gap-4 mt-8 ring-1 ring-orange-400 max-h-[600px] overflow-y-auto w-full max-w-4xl">
+                <h3 className="text-xl font-bold text-orange-400 capitalize border-b border-orange-900 pb-2 flex items-center gap-2"><Play className="w-5 h-5"/> Live Component Stream Preview</h3>
+                <p className="text-xs text-orange-200 uppercase tracking-widest font-bold">Components rendered below are synced in real-time. Changes to the JSON above dispatch via WebSocket immediately.</p>
+                <div className="grid gap-6">
+                   {components.filter(c => c.visible).map(c => {
+                      if (c.type === 'marketing-banner') {
+                         return (
+                            <div key={c.id} className="relative group overflow-hidden rounded-lg min-h-[200px] border border-orange-900 flex flex-col items-center justify-center p-8 transition-all" style={{ backgroundColor: c.config.color || '#ea580c' }}>
+                               <div className="absolute top-2 right-2 bg-black/80 text-white text-[10px] uppercase font-bold px-2 py-1 rounded">marketing-banner</div>
+                               <h4 className="text-4xl font-black text-white text-center">{c.config.title || 'No Title'}</h4>
+                               <p className="text-white font-bold text-lg text-center mt-4">{c.config.subtitle || 'No Subtitle'}</p>
+                            </div>
+                         );
+                      }
+                      
+                      if (c.type === 'pricing-table') {
+                         return (
+                            <div key={c.id} className="relative group overflow-hidden bg-black border border-orange-500 rounded-lg p-8 transform transition hover:scale-[1.01] flex flex-col items-center text-center max-w-sm mx-auto">
+                               <div className="absolute top-2 right-2 bg-orange-900 text-white text-[10px] uppercase font-bold px-2 py-1 rounded">pricing-table</div>
+                               <h4 className="text-2xl font-bold text-orange-500">{c.config.plan_name || 'Standard Plan'}</h4>
+                               <div className="text-5xl font-black text-white my-6">${c.config.price || '0'} <span className="text-lg font-normal text-orange-400">/ user / mo</span></div>
+                               <ul className="space-y-3 text-base text-gray-300 w-full text-left">
+                                 {(c.config.features || []).map((f: string, i: number) => (
+                                    <li key={i} className="flex items-center gap-3"><CheckCircle className="w-5 h-5 text-orange-500 shrink-0" /> {f}</li>
+                                 ))}
+                               </ul>
+                               <button className="w-full mt-8 bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 uppercase tracking-widest rounded transition-colors">Select Plan</button>
+                            </div>
+                         );
+                      }
+
+                      // Default Fallback render for unknown types
+                      return (
+                        <div key={c.id} className="relative border border-orange-900 bg-black p-4 rounded text-sm group">
+                           <div className="absolute top-0 right-0 bg-orange-900 px-2 text-[10px] uppercase font-bold">{c.type}</div>
+                           <pre className="text-orange-400 whitespace-pre-wrap font-mono text-xs overflow-x-auto">{JSON.stringify(c.config, null, 2)}</pre>
+                        </div>
+                      )
+                   })}
+                   {components.filter(c => c.visible).length === 0 && (
+                     <div className="text-orange-700 italic border border-dashed border-orange-900 p-8 text-center rounded text-lg font-bold">
+                        No active components deployed on the stream.
+                     </div>
+                   )}
+                </div>
+              </div>
+
             </div>
           )}
 
@@ -2601,7 +3012,22 @@ function AdminDashboard() {
                       <p className="text-orange-800 text-[10px] mt-2 uppercase tracking-wide">Leave as Global Access to allow the key to perform any operation across the system.</p>
                     </div>
 
-                    <div className="p-4 bg-black border border-orange-900 rounded-lg shadow-inner">
+                    <div className="p-4 bg-black border border-orange-900 rounded-lg shadow-inner mt-4">
+                      <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1 flex items-center justify-between">
+                         <span>Rate Limit (Requests / Hour)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000000}
+                        value={newKeyRateLimit}
+                        onChange={e => setNewKeyRateLimit(Number(e.target.value))}
+                        className="w-full bg-black border border-orange-900 text-orange-200 px-4 py-2 rounded focus:outline-none focus:border-orange-500 mt-2 font-mono"
+                      />
+                      <p className="text-orange-800 text-[10px] mt-2 uppercase tracking-wide">Maximum number of API requests allowed per hour for this token.</p>
+                    </div>
+
+                    <div className="p-4 bg-black border border-orange-900 rounded-lg shadow-inner mt-4">
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
                         <div className="flex-1">
                           <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Prefix</label>
@@ -2681,7 +3107,7 @@ function AdminDashboard() {
                               key += chars.charAt(randomValues[i] % chars.length);
                             }
     
-                            const payload = { name: newKeyName.trim(), domain_id: newKeyDomainId || undefined, custom_key: key };
+                            const payload = { name: newKeyName.trim(), domain_id: newKeyDomainId || undefined, custom_key: key, rate_limit_per_hour: newKeyRateLimit };
                             const res = await fetch('/api/api-keys', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
@@ -2693,6 +3119,7 @@ function AdminDashboard() {
                               setNewKeyName('');
                               setNewKeyDomainId('');
                               setNewKeyWizardStep(1);
+                              setNewKeyRateLimit(1000);
                               fetchApiKeys();
                             } else {
                               alert("Failed to generate key: " + data.error);
@@ -2768,6 +3195,7 @@ function AdminDashboard() {
                       <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Name</th>
                       <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Prefix</th>
                       <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Scope</th>
+                      <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Rate Limit</th>
                       <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Total Calls</th>
                       <th className="p-3 text-white font-bold tracking-widest uppercase text-xs">Created At</th>
                       <th className="p-3 text-orange-500 font-bold tracking-widest uppercase text-xs text-right">Actions</th>
@@ -2776,27 +3204,69 @@ function AdminDashboard() {
                   <tbody>
                     {apiKeys.map(key => (
                       <tr key={key.id} className="border-b border-orange-900/50 hover:bg-orange-900/20 transition-colors group">
-                        <td className="p-3 font-medium text-orange-200">{key.name}</td>
-                        <td className="p-3 text-orange-400 font-mono text-xs">{key.prefix}...</td>
-                        <td className="p-3 text-orange-300 text-xs">{domains.find(d => d.id === key.domain_id)?.name || 'Global'}</td>
-                        <td className="p-3 text-orange-300 font-mono text-xs">{key.use_count || 0}</td>
-                        <td className="p-3 text-orange-400/70">{new Date(key.created_at).toLocaleString()}</td>
-                        <td className="p-3 text-right">
-                           <button onClick={(e) => {
-                             e.preventDefault();
-                             setConfirmDialog({
-                               isOpen: true,
-                               title: 'Revoke API Key',
-                               message: `Revoke API Key "${key.name}"? This action cannot be undone.`,
-                               onConfirm: async () => {
-                                 await fetch(`/api/api-keys/${key.id}`, { method: 'DELETE' });
+                        {editingApiKeyId === key.id ? (
+                          <>
+                            <td className="p-3">
+                              <input type="text" className="w-full bg-black border border-orange-600 text-white p-1 rounded font-mono text-sm" value={editingApiKeyForm.name} onChange={e => setEditingApiKeyForm({...editingApiKeyForm, name: e.target.value})} />
+                            </td>
+                            <td className="p-3 text-orange-400 font-mono text-xs">{key.prefix}...</td>
+                            <td className="p-3">
+                              <select className="w-full bg-black border border-orange-600 text-white p-1 rounded text-xs" value={editingApiKeyForm.domain_id || ''} onChange={e => setEditingApiKeyForm({...editingApiKeyForm, domain_id: e.target.value})}>
+                                <option value="">Global</option>
+                                {domains.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                              </select>
+                            </td>
+                            <td className="p-3">
+                              <input type="number" min="1" className="w-full bg-black border border-orange-600 text-white p-1 rounded font-mono text-xs" value={editingApiKeyForm.rate_limit_per_hour} onChange={e => setEditingApiKeyForm({...editingApiKeyForm, rate_limit_per_hour: parseInt(e.target.value) || 1000})} />
+                            </td>
+                            <td className="p-3 text-orange-300 font-mono text-xs">{key.use_count || 0}</td>
+                            <td className="p-3 text-orange-400/70">{new Date(key.created_at).toLocaleString()}</td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                               <button onClick={() => setEditingApiKeyId(null)} className="text-orange-500 hover:text-white mr-3"><X className="w-4 h-4 inline"/></button>
+                               <button onClick={async () => {
+                                 await fetch(`/api/api-keys/${key.id}`, {
+                                   method: 'PUT',
+                                   headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify(editingApiKeyForm)
+                                 });
+                                 setEditingApiKeyId(null);
                                  fetchApiKeys();
-                               }
-                             });
-                           }} className="text-red-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Revoke Key">
-                             <Trash2 className="w-4 h-4 ml-auto" />
-                           </button>
-                        </td>
+                               }} className="text-green-500 hover:text-green-400"><Save className="w-4 h-4 inline"/></button>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="p-3 font-medium text-orange-200">{key.name}</td>
+                            <td className="p-3 text-orange-400 font-mono text-xs">{key.prefix}...</td>
+                            <td className="p-3 text-orange-300 text-xs">{domains.find(d => d.id === key.domain_id)?.name || 'Global'}</td>
+                            <td className="p-3 text-orange-300 font-mono text-xs">{key.rate_limit_per_hour}/hr</td>
+                            <td className="p-3 text-orange-300 font-mono text-xs">{key.use_count || 0}</td>
+                            <td className="p-3 text-orange-400/70">{new Date(key.created_at).toLocaleString()}</td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                               <button onClick={(e) => {
+                                 e.preventDefault();
+                                 setEditingApiKeyId(key.id);
+                                 setEditingApiKeyForm({ name: key.name, domain_id: key.domain_id || '', rate_limit_per_hour: key.rate_limit_per_hour || 1000 });
+                               }} className="text-blue-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity mr-3" title="Edit Key">
+                                 <Settings className="w-4 h-4 inline" />
+                               </button>
+                               <button onClick={(e) => {
+                                 e.preventDefault();
+                                 setConfirmDialog({
+                                   isOpen: true,
+                                   title: 'Revoke API Key',
+                                   message: `Revoke API Key "${key.name}"? This action cannot be undone.`,
+                                   onConfirm: async () => {
+                                     await fetch(`/api/api-keys/${key.id}`, { method: 'DELETE' });
+                                     fetchApiKeys();
+                                   }
+                                 });
+                               }} className="text-red-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Revoke Key">
+                                 <Trash2 className="w-4 h-4 inline" />
+                               </button>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                     {apiKeys.length === 0 && (
@@ -2946,6 +3416,68 @@ function AdminDashboard() {
             </div>
           )}
 
+          {/* API DOCS TAB */}
+          {activeTab === 'apidocs' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="flex flex-col justify-between items-start mb-6 gap-2 border-b border-orange-900 pb-4">
+                <h2 className="text-xl font-bold text-white uppercase tracking-widest flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-orange-500" /> API Documentation
+                </h2>
+                <p className="text-sm text-orange-400 font-mono">Dynamic endpoint detection & schema inference.</p>
+              </div>
+
+              <div className="grid gap-4">
+                {apiDocs.map((doc, i) => (
+                  <div key={i} className="bg-black border border-orange-900 rounded-lg p-4 overflow-hidden shadow-sm group">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className={cn(
+                        "font-bold text-xs px-2 py-1 uppercase rounded tracking-wider",
+                        doc.method === 'GET' ? "bg-blue-900/50 text-blue-400 border border-blue-800" :
+                        doc.method === 'POST' ? "bg-green-900/50 text-green-400 border border-green-800" :
+                        doc.method === 'PUT' ? "bg-yellow-900/50 text-yellow-400 border border-yellow-800" :
+                        doc.method === 'DELETE' ? "bg-red-900/50 text-red-400 border border-red-800" :
+                        "bg-orange-900 text-white"
+                      )}>
+                        {doc.method}
+                      </span>
+                      <span className="font-mono text-white text-lg flex-1">{doc.path}</span>
+                      <button 
+                        onClick={() => generateAndDownloadSDK(doc)}
+                        className="text-blue-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity p-2"
+                        title="Download SDK Client"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setEditingSchemaDoc(doc);
+                          setEditingSchemaText(doc.schema);
+                        }}
+                        className="text-orange-500 hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity p-2"
+                        title="Edit Schema"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {doc.schema && doc.schema !== 'None' && (
+                      <div className="mt-4 pt-4 border-t border-orange-900/50">
+                        <div className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-2 flex justify-between">
+                           <span>Client Payload</span>
+                        </div>
+                        <pre className="text-orange-300 font-mono text-sm bg-orange-950/20 p-3 rounded border border-orange-900/30 whitespace-pre-wrap">
+                          {doc.schema}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {apiDocs.length === 0 && (
+                   <div className="text-center p-8 text-orange-800 font-mono italic">Scanning routes...</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* LOGS TAB */}
           {activeTab === 'logs' && (
             <div className="h-full flex flex-col animate-in fade-in duration-300">
@@ -3000,9 +3532,15 @@ function AdminDashboard() {
                        <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Agent Role</label>
                        <select value={newAgentForm.role} onChange={e => setNewAgentForm({...newAgentForm, role: e.target.value})} className="w-full bg-black border border-orange-600 focus:border-red-500 rounded p-2 text-white">
                           <option value="operator">Operator</option>
+                          <option value="outreach">Growth & Outreach Lead</option>
                           <option value="admin">Administrator</option>
                           <option value="analyst">Data Analyst</option>
                        </select>
+                     </div>
+                     <div className="flex gap-2 mb-2">
+                       <button onClick={() => setNewAgentForm({name: 'Outreach Commander', model: 'gemini-3.1-pro-preview', role: 'outreach', system_instruction: 'You are the Outreach Commander. Your goal is to analyze audience traffic on the platform and automatically generate personalized, high-conversion direct messages and outbound emails to potential members or users of the connected domains. Prioritize relevance and tone based on user origin.', api_key: ''})} type="button" className="text-xs bg-orange-900/50 hover:bg-orange-800 text-orange-200 py-1 px-3 rounded-full border border-orange-700 transition">
+                         Load "Outreach Bot" Template
+                       </button>
                      </div>
                      <div>
                        <label className="block text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Personality</label>
@@ -3155,6 +3693,12 @@ function AdminDashboard() {
                    Execute <Terminal className="w-4 h-4"/>
                  </button>
                </form>
+            </div>
+          )}
+
+          {activeTab === 'ollama_agent' && (
+            <div className="h-full flex flex-col animate-in fade-in duration-300 relative z-0">
+               <OllamaChat />
             </div>
           )}
 
@@ -3373,6 +3917,63 @@ function AdminDashboard() {
                 setAgentVersions([]);
               }} className="px-4 py-2 border border-orange-800 text-orange-300 hover:text-white rounded uppercase text-sm font-bold transition-colors">
                 Close Explorer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SCHEMA EDITOR DIALOG */}
+      {editingSchemaDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-black border border-orange-600 shadow-2xl shadow-orange-900/50 rounded-lg max-w-2xl w-full p-6 flex flex-col h-[60vh] animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+              <Layers className="w-6 h-6 text-orange-500" />
+              Edit Schema
+            </h3>
+            <div className="mb-4">
+              <span className={cn(
+                "font-bold text-xs px-2 py-1 uppercase rounded tracking-wider",
+                editingSchemaDoc.method === 'GET' ? "bg-blue-900/50 text-blue-400 border border-blue-800" :
+                editingSchemaDoc.method === 'POST' ? "bg-green-900/50 text-green-400 border border-green-800" :
+                editingSchemaDoc.method === 'PUT' ? "bg-yellow-900/50 text-yellow-400 border border-yellow-800" :
+                editingSchemaDoc.method === 'DELETE' ? "bg-red-900/50 text-red-400 border border-red-800" :
+                "bg-orange-900 text-white"
+              )}>
+                {editingSchemaDoc.method}
+              </span>
+              <span className="ml-2 font-mono text-orange-200">{editingSchemaDoc.path}</span>
+            </div>
+            <textarea
+              className="flex-1 w-full bg-orange-950/20 border border-orange-900 text-orange-200 p-4 rounded font-mono text-sm focus:outline-none focus:border-orange-500 mb-4 resize-none"
+              value={editingSchemaText}
+              onChange={(e) => setEditingSchemaText(e.target.value)}
+              placeholder="Enter JSON schema or parameter format..."
+            />
+            <div className="flex justify-end gap-3 shrink-0">
+              <button 
+                onClick={() => setEditingSchemaDoc(null)}
+                className="px-4 py-2 border border-orange-800 text-orange-300 hover:text-white rounded uppercase text-sm font-bold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={async () => {
+                   await fetch('/api/docs/schema', {
+                     method: 'PUT',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({
+                       method: editingSchemaDoc.method,
+                       path: editingSchemaDoc.path,
+                       schema: editingSchemaText
+                     })
+                   });
+                   setEditingSchemaDoc(null);
+                   fetchAll();
+                }}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded font-bold uppercase tracking-widest text-sm transition-colors shadow-[0_0_15px_rgba(234,88,12,0.4)]"
+              >
+                Save Protocol
               </button>
             </div>
           </div>

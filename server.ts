@@ -207,6 +207,64 @@ function initSchema() {
     currentVersion = 2;
   }
 
+  // Migration 3: growth_triggers table
+  if (currentVersion < 3) {
+    systemLog('INFO', 'DB', 'Running migration 3 (growth_triggers)');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS growth_triggers (
+        id TEXT PRIMARY KEY,
+        domain_id TEXT NOT NULL,
+        threshold INTEGER NOT NULL,
+        config JSON NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (domain_id) REFERENCES domains (id) ON DELETE CASCADE
+      );
+    `);
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '3')").run();
+    currentVersion = 3;
+  }
+
+  // Migration 4: app_secrets table
+  if (currentVersion < 4) {
+    systemLog('INFO', 'DB', 'Running migration 4 (app_secrets)');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_secrets (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        value TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '4')").run();
+    currentVersion = 4;
+  }
+
+  // Migration 5: rate_limit_per_hour for api_keys
+  if (currentVersion < 5) {
+    systemLog('INFO', 'DB', 'Running migration 5 (api_keys rate_limit_per_hour)');
+    try {
+      db.exec(`ALTER TABLE api_keys ADD COLUMN rate_limit_per_hour INTEGER DEFAULT 1000;`);
+    } catch (e) {}
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '5')").run();
+    currentVersion = 5;
+  }
+
+  // Migration 6: api_schemas overrides
+  if (currentVersion < 6) {
+    systemLog('INFO', 'DB', 'Running migration 6 (api_schemas)');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_schemas (
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        schema TEXT,
+        PRIMARY KEY (method, path)
+      );
+    `);
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '6')").run();
+    currentVersion = 6;
+  }
+
   // Check if we need to seed initial data
   const count = db.prepare('SELECT count(*) as count FROM domains').get() as { count: number };
   if (count.count === 0) {
@@ -243,7 +301,7 @@ function initSchema() {
   }
 
   // Final verification to satisfy the safety check
-  verifySchemaVersion(2);
+  verifySchemaVersion(6);
 }
 
 try {
@@ -280,6 +338,73 @@ async function startServer() {
     }
 
     next();
+  });
+
+  app.get("/api/docs", async (req, res) => {
+    try {
+      const fs = (await import('fs')).default;
+      const path = (await import('path')).default;
+      const sourceFile = path.resolve(process.cwd(), 'server.ts');
+      if (!fs.existsSync(sourceFile)) {
+        return res.json({ endpoints: [] });
+      }
+      
+      const content = fs.readFileSync(sourceFile, 'utf-8');
+      const endpoints: any[] = [];
+      const regex = /app\.(get|post|put|delete)\(['"]([^'"]+)['"]/g;
+      let match;
+      
+      while ((match = regex.exec(content)) !== null) {
+        if (match[2] === '*') continue; // skip catch-all
+        
+        let schema = 'None';
+        // Try to find req.body destructuring for basic schema hint
+        const blockStart = content.indexOf('{', match.index);
+        const blockEnd = blockStart > -1 ? content.indexOf('}', blockStart) : -1;
+        if (blockStart > -1 && blockEnd > -1) {
+           const block = content.substring(blockStart, blockEnd);
+           const bodyMatch = block.match(/const\s+\{([^}]+)\}\s*=\s*req\.body/);
+           if (bodyMatch) {
+             schema = `{ ${bodyMatch[1].trim()} }`;
+           }
+        }
+
+        endpoints.push({
+          method: match[1].toUpperCase(),
+          path: match[2],
+          schema: schema
+        });
+      }
+      
+      // Remove duplicates
+      const unique = Array.from(new Set(endpoints.map(e => e.method + e.path)))
+        .map(id => endpoints.find(e => (e.method + e.path) === id));
+        
+      const overrides = db.prepare('SELECT method, path, schema FROM api_schemas').all();
+      
+      const finalEndpoints = unique.map((ep: any) => {
+        const override = (overrides as any[]).find(o => o.method === ep.method && o.path === ep.path);
+        if (override) {
+          return { ...ep, schema: override.schema };
+        }
+        return ep;
+      });
+        
+      res.json(finalEndpoints);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/docs/schema", (req, res) => {
+    try {
+      const { method, path, schema } = req.body;
+      db.prepare('INSERT OR REPLACE INTO api_schemas (method, path, schema) VALUES (?, ?, ?)')
+        .run(method, path, schema);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Server-Sent Events for Live Logs
@@ -334,7 +459,7 @@ async function startServer() {
   });
 
   // Core API Routes
-  app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+  app.get("/api/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 
   app.post("/api/agent", async (req, res) => {
     try {
@@ -728,11 +853,11 @@ async function startServer() {
       if (supabaseUrl && supabaseKey) {
           const { createClient } = await import('@supabase/supabase-js');
           const supabase = createClient(supabaseUrl, supabaseKey);
-          const { data, error } = await supabase.from('api_keys').select('id, name, prefix, created_at, last_used, use_count, domain_id').order('created_at', { ascending: false });
+          const { data, error } = await supabase.from('api_keys').select('id, name, prefix, created_at, last_used, use_count, domain_id, rate_limit_per_hour').order('created_at', { ascending: false });
           if (error) throw error;
           return res.json(data);
       }
-      const keys = db.prepare('SELECT id, name, prefix, created_at, last_used, use_count, domain_id FROM api_keys ORDER BY created_at DESC').all();
+      const keys = db.prepare('SELECT id, name, prefix, created_at, last_used, use_count, domain_id, rate_limit_per_hour FROM api_keys ORDER BY created_at DESC').all();
       res.json(keys);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -765,13 +890,13 @@ async function startServer() {
 
   app.post("/api/api-keys", async (req, res) => {
     try {
-      const { name, domain_id, custom_key } = req.body;
+      const { name, domain_id, custom_key, rate_limit_per_hour = 1000 } = req.body;
       const rawKey = custom_key || crypto.randomBytes(32).toString('hex');
       const prefix = rawKey.substring(0, 8);
       const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
       const id = 'key_' + crypto.randomBytes(8).toString('hex');
       
-      systemLog('INFO', 'API_Keys', `Generated new API key: ${name}`);
+      systemLog('INFO', 'API_Keys', `Generated new API key: ${name} (Limit: ${rate_limit_per_hour}/hr)`);
 
       const supabaseUrl = process.env.SUPABASE_URL || '';
       const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -779,18 +904,40 @@ async function startServer() {
           const { createClient } = await import('@supabase/supabase-js');
           const supabase = createClient(supabaseUrl, supabaseKey);
           await supabase.from('api_keys').insert([{
-              id, name, key_hash: hash, prefix, domain_id: domain_id || null
+              id, name, key_hash: hash, prefix, domain_id: domain_id || null, rate_limit_per_hour
           }]);
           return res.json({ success: true, api_key: rawKey, id, prefix });
       }
 
-      db.prepare('INSERT INTO api_keys (id, name, key_hash, prefix, domain_id) VALUES (?, ?, ?, ?, ?)').run(
-        id, name, hash, prefix, domain_id || null
+      db.prepare('INSERT INTO api_keys (id, name, key_hash, prefix, domain_id, rate_limit_per_hour) VALUES (?, ?, ?, ?, ?, ?)').run(
+        id, name, hash, prefix, domain_id || null, rate_limit_per_hour
       );
       
       res.json({ success: true, api_key: rawKey, id, prefix });
     } catch (e: any) {
       systemLog('ERROR', 'API_Keys', `Failed to generate key: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/api-keys/:id", async (req, res) => {
+    try {
+      const { name, domain_id, rate_limit_per_hour } = req.body;
+      systemLog('INFO', 'API_Keys', `Updated API key: ${req.params.id}`);
+      const supabaseUrl = process.env.SUPABASE_URL || '';
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+      if (supabaseUrl && supabaseKey) {
+          const { createClient } = await import('@supabase/supabase-js');
+          const supabase = createClient(supabaseUrl, supabaseKey);
+          await supabase.from('api_keys').update({ name, domain_id: domain_id || null, rate_limit_per_hour }).eq('id', req.params.id);
+          return res.json({ success: true });
+      }
+      db.prepare('UPDATE api_keys SET name = ?, domain_id = ?, rate_limit_per_hour = ? WHERE id = ?').run(
+        name, domain_id || null, rate_limit_per_hour || 1000, req.params.id
+      );
+      res.json({ success: true });
+    } catch (e: any) {
+      systemLog('ERROR', 'API_Keys', `Failed to update key: ${e.message}`);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1058,12 +1205,15 @@ async function startServer() {
     }
   });
   // -------------------------
+  // COMPONENTS
+  // -------------------------
 
   app.post("/api/components", (req, res) => {
     try {
       const { id, domain_id, type, visible, config } = req.body;
       systemLog('INFO', 'Config', `Adding component ${type} to domain ${domain_id}`);
       db.prepare('INSERT INTO components (id, domain_id, type, visible, config) VALUES (?, ?, ?, ?, ?)').run(id, domain_id, type, visible ? 1 : 0, JSON.stringify(config));
+      logEmitter.emit('log', { type: 'component_added', data: { id, domain_id, type, visible, config } });
       res.json({ success: true, id });
     } catch (e: any) {
       systemLog('ERROR', 'Config', `Failed to create component: ${e.message}`);
@@ -1078,6 +1228,7 @@ async function startServer() {
       db.prepare('UPDATE components SET type = ?, visible = ?, config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
         type, visible ? 1 : 0, JSON.stringify(config), req.params.id
       );
+      logEmitter.emit('log', { type: 'component_updated', data: { id: req.params.id, type, visible, config } });
       res.json({ success: true });
     } catch (e: any) {
       systemLog('ERROR', 'Config', `Failed to update component: ${e.message}`);
@@ -1089,6 +1240,75 @@ async function startServer() {
     try {
       systemLog('WARN', 'Config', `Deleting component ${req.params.id}`);
       db.prepare('DELETE FROM components WHERE id = ?').run(req.params.id);
+      logEmitter.emit('log', { type: 'component_deleted', data: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // -------------------------
+  // GROWTH TRIGGERS
+  // -------------------------
+
+  app.get("/api/growth-triggers", (req, res) => {
+    try {
+      const triggers = db.prepare('SELECT growth_triggers.*, domains.name as domain_name FROM growth_triggers LEFT JOIN domains ON growth_triggers.domain_id = domains.id ORDER BY growth_triggers.created_at DESC').all();
+      triggers.forEach((t: any) => {
+        try { t.config = JSON.parse(t.config); } catch (e) {}
+      });
+      res.json(triggers);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/growth-triggers", (req, res) => {
+    try {
+      const { id, domain_id, threshold, config } = req.body;
+      systemLog('INFO', 'Config', `Creating growth trigger for domain ${domain_id}`);
+      db.prepare('INSERT INTO growth_triggers (id, domain_id, threshold, config) VALUES (?, ?, ?, ?)').run(id, domain_id, threshold, JSON.stringify(config));
+      res.json({ success: true, id });
+    } catch (e: any) {
+      systemLog('ERROR', 'Config', `Failed to create growth trigger: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+  
+  app.delete("/api/growth-triggers/:id", (req, res) => {
+    try {
+      systemLog('WARN', 'Config', `Deleting growth trigger ${req.params.id}`);
+      db.prepare('DELETE FROM growth_triggers WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/app-secrets", (req, res) => {
+    try {
+      res.json(db.prepare('SELECT id, name, value FROM app_secrets ORDER BY name ASC').all());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/app-secrets", (req, res) => {
+    try {
+      const { id = 'sec' + Date.now(), name, value } = req.body;
+      systemLog('INFO', 'Config', `Upserting secret ${name}`);
+      db.prepare('INSERT INTO app_secrets (id, name, value) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP').run(id, name, value);
+      res.json({ success: true, id, name });
+    } catch (e: any) {
+      systemLog('ERROR', 'Config', `Failed to upsert secret: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/app-secrets/:id", (req, res) => {
+    try {
+      systemLog('WARN', 'Config', `Deleting secret ${req.params.id}`);
+      db.prepare('DELETE FROM app_secrets WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
